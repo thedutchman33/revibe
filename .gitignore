@@ -1,0 +1,17 @@
+.gradle/
+build/
+.tooling/
+reference/
+dev-fixtures/
+*.mp4
+*.apk
+*.exe
+*.png
+*.jpg
+!docs/**/*.png
+local.properties
+.idea/
+.kotlin/
+*.db
+*.db-wal
+*.db-shm
