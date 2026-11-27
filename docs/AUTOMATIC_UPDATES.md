@@ -32,7 +32,9 @@ Every push to `main` runs `.github/workflows/release.yml`. The workflow:
    - `feat:` → minor (`0.9.0` → `0.10.0`);
    - `fix:`, `perf:`, `docs:`, `ci:` or any other conventional type → patch;
    - `type!:` or `BREAKING CHANGE` → minor while on `0.x`, major from `1.0.0`;
-3. runs the full desktop test suite on Windows with VLC installed;
+3. runs the 181 deterministic desktop tests on Windows with VLC installed. The four
+   live YouTube transport checks are opt-in (`include_live_tests`) because GitHub's
+   datacenter IPs are currently served SABR-only responses;
 4. builds the app image and `Revibe-<version>-Setup.exe` with the update feed
    baked in;
 5. performs a clean install/launch/uninstall on a fresh Windows runner;
@@ -161,6 +163,8 @@ Covered by automated tests and CI:
 - Real Inno EXE install over the previous release, result JSON, registry
   version, unchanged install directory, data preservation and relaunch.
 - Clean install without Java/JDK/Gradle, shortcuts and uninstall cleanup.
+- 181 deterministic tests pass; the four live transport checks remain available via the
+  manual `include_live_tests` input but are not a release gate.
 
 Pending or out of scope:
 

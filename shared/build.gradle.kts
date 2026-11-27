@@ -9,6 +9,10 @@ val revibePublisher = providers.gradleProperty("revibePublisher").orElse("").get
 val revibeAllowUnsignedUpdates = providers.gradleProperty("revibeAllowUnsignedUpdates")
     .orElse("false")
     .get()
+val revibeLiveTests = providers.gradleProperty("revibeLiveTests")
+    .orElse("true")
+    .map(String::toBoolean)
+    .get()
 val buildInfoDir = layout.buildDirectory.dir("generated/revibeBuildInfo")
 val generateRevibeBuildInfo = tasks.register("generateRevibeBuildInfo") {
     inputs.property("version", revibeVersion)
@@ -121,4 +125,19 @@ kotlin {
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     dependsOn(generateRevibeBuildInfo)
+}
+
+// GitHub's datacenter IPs are currently served SABR-only YouTube responses. These
+// four checks assert that progressive MP4/AAC is available, so a datacenter run
+// would fail on the catalog's transport policy rather than on Revibe. Release CI
+// passes -PrevibeLiveTests=false; manual runs can opt back in.
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    if (!revibeLiveTests) {
+        filter {
+            excludeTestsMatching("com.revibe.youtube.InnerTubeXIntegrationTest")
+            excludeTestsMatching("com.revibe.youtube.YouTubePlaybackEngineTest")
+            excludeTestsMatching("com.revibe.youtube.YouTubePlaybackResolutionTest")
+            excludeTestsMatching("*VlcPlaybackEngineTest.LibVLC*")
+        }
+    }
 }

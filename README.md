@@ -174,10 +174,11 @@ See [docs/REVIBE_ARCHITECTURE.md](docs/REVIBE_ARCHITECTURE.md),
 
 ## Verified
 
-Full runs executed **112 tests, 0 failures** (33 suites), including 26 account/sync tests and 27
-update tests. Earlier runs during this work saw live Cover Art Archive and YouTube stream checks
-fail with upstream errors, then pass on retry; those are external-service checks, not account/sync
-or update assertions. The real signed MSI upgrade remains untested.
+The release gate runs **181 deterministic tests, 0 failures** (44 suites), including account/sync
+and update coverage. Four additional live YouTube transport checks are opt-in because GitHub's
+datacenter IPs currently receive SABR-only responses; run them with
+`./gradlew :shared:desktopTest -PrevibeLiveTests=true`. The release workflow upgrades the previous
+Inno EXE release on a fresh Windows runner and verifies the result, data and relaunch.
 
 The suite includes live requests and real native playback:
 

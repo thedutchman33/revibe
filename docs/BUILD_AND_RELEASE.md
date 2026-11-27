@@ -128,7 +128,8 @@ address; the app still identifies itself by repository URL when it is unset.
 | LibVLC seek/pause/end/error/live YouTube | Passed (`VlcPlaybackEngineTest`, 9 checks) |
 | YouTube playlist search/details and SQLite import | Passed |
 | Expired signed-URL recovery | Passed (`ExpiredStreamRecoveryTest`) |
-| Full `:shared:desktopTest` | 181 tests, 0 failures (46 suites) |
+| `:shared:desktopTest -PrevibeLiveTests=false` | 181 deterministic tests, 0 failures (44 suites) |
+| Live YouTube transport checks | Opt-in with `-PrevibeLiveTests=true`; GitHub datacenter IPs currently receive SABR-only responses |
 | Automatic update logic | Passed (unit tests; see `docs/AUTOMATIC_UPDATES.md`) |
 | Real Inno EXE upgrade/relaunch | Passed by the release workflow's previous-release upgrade job |
 | Unsigned EXE SHA-256 update path | Passed; Authenticode remains optional until a certificate exists |
