@@ -30,8 +30,9 @@ from build files and source trees, not only READMEs.
 - Gradle 9.8.2; exposes YouTube Music search/browse/stream resolution and models.
 - It requires web-client API keys and visitor data; these are not public, stable or licensed for
   third-party clients.
-- Decision: **not integrated**. The architecture keeps a `CatalogSource` seam so an authorised
-  YouTube provider could be plugged in later if one exists.
+- Decision: **integrated as the primary catalog** (v0.13.1) in later milestones. It now handles
+  search, browse, playback resolution and the native `next()` queue. The caveats above still apply:
+  endpoints can change, and access is subject to YouTube's terms.
 
 ## BitChord — `kushagrasinghx/BitChord`
 
@@ -61,8 +62,6 @@ from build files and source trees, not only READMEs.
 | Check | Result |
 | --- | --- |
 | `api.deezer.com/search?q=...` | `{"data":[],"total":288}` — empty payload from this network/region; not depended on |
-| `itunes.apple.com/search?...&country=IN` | Real tracks, artwork, 30s `previewUrl` |
-| `itunes.apple.com/lookup?id=...&entity=album` | Real discography |
 | `musicbrainz.org/ws/2/recording` | 503 "server busy" at research time |
 | `en.wikipedia.org/api/rest_v1/page/summary/Arijit_Singh` | Real extract + image |
 | `lrclib.net/api/get` + `/api/search` | Real plain and synced lyrics; `hasWordSync` field present |

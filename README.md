@@ -24,6 +24,20 @@ force the fallback.
 ./gradlew :desktopApp:run
 ```
 
+### Windows installer
+
+Download the latest per-user installer from
+[GitHub Releases](https://github.com/thedutchman33/revibe/releases/latest). It bundles its own Java
+runtime, installs under `%LOCALAPPDATA%\Programs\Revibe`, and creates Start Menu and desktop
+shortcuts. Java, a JDK and Gradle are not required to run it.
+
+To build the installer locally (requires Inno Setup 6):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/build-windows-installer.ps1
+# desktopApp/build/installer/Revibe-<version>-Setup.exe
+```
+
 Data lives in `%USERPROFILE%\.revibe` (override with `REVIBE_HOME`). Set `REVIBE_CONTACT_EMAIL`
 to include the distributor contact address in the lrc.red request identity; lyrics credit and links
 are shown regardless.
@@ -47,7 +61,8 @@ project.
 
 ```bash
 ./gradlew :shared:desktopTest     # full suite, including live YouTube Music tests
-./gradlew :desktopApp:packageMsi  # installer
+./gradlew :desktopApp:packageMsi  # signed-update MSI path
+powershell -File tools/build-windows-installer.ps1  # standalone per-user EXE
 ```
 
 Updates are configured at build time with `revibeVersion`, `revibeUpdateManifestUrl`
@@ -73,13 +88,13 @@ a signed packaged upgrade has not yet been run.
 | Synced lyrics | **Implemented** | LRCLIB; line and word synchronisation |
 | Flexible three-container shell | **Implemented** | Drag-resizable library/right rail, collapse, close/reopen, persisted widths |
 | Dynamic home | **Implemented (first pass)** | Maturity from real activity; recent-playlist grid from real plays; provider-seeded personal mixes |
-| Artwork enrichment | **Implemented (artwork)** | MusicBrainz + Cover Art Archive fallback only when the catalog has no cover |
+| Artwork enrichment | **Implemented (artwork)** | YouTube Music primary; MusicBrainz/Cover Art Archive and Deezer fallback when the catalog has no cover |
 | Miniplayer | **Implemented** | Compact always-on-top window; same playback session; expand without interruption |
 | Automatic updates | **Implemented (unverified installer)** | HTTPS manifest, SHA-256, Authenticode publisher pin, separate MSI handoff; signed packaged upgrade pending |
 | Keyboard shortcuts | **Implemented** | Ctrl+F, Ctrl+Space, Ctrl+←/→, Ctrl+↑/↓, Ctrl+L, Esc |
 | Right contextual sidebar | **Implemented** | Now Playing, lyrics preview, About, credits, queue, recently played |
 | Liked, saved albums, followed artists, playlists, history | **Implemented** | SQLite, persisted |
-| Artwork + palette theming | **Implemented** | Skia decode, memory cache, dominant-colour accent |
+| Artwork + palette theming | **Implemented** | High-resolution selection, Skia memory + disk cache, dominant-colour accent |
 | Media keys | **Implemented** | Global play/pause, next, previous |
 | Dynamic new/established-user homepage | **Implemented (first pass)** | Real activity thresholds, dynamic sections and real shortcuts |
 | Provider enrichment (Last.fm, ListenBrainz, Spotify) | **Not implemented** | MusicBrainz/CAA artwork is live; the rest remain planned |
@@ -90,9 +105,8 @@ a signed packaged upgrade has not yet been run.
 | SABR / UMP playback | **Not implemented** | Needs a dedicated transport |
 | Gapless, crossfade, EQ, SMTC | **Not implemented** | Needs a player-specific DSP pipeline / WinRT bridge |
 
-The retired preview catalog was removed. Existing saved rows are retained as read-only
-`ARCHIVED` entries so likes, playlists and history are not lost; see
-[docs/ITUNES_REMOVAL.md](docs/ITUNES_REMOVAL.md).
+There is no Apple catalog, preview, search or artwork integration in Revibe. Only the YouTube Music
+catalog and the documented artwork providers remain.
 
 ## How the YouTube path works
 
@@ -173,12 +187,10 @@ The suite includes live requests and real native playback:
 - `ExpiredStreamRecoveryTest` — a signed URL is refreshed exactly once before an error is shown.
 - `QueueEngineTest` — native order, continuation, manual priority, autoplay off, failures, stale
   context, auto-advance and history.
-- `ArchivedLibraryMigrationTest` — retired-catalog rows keep likes, playlist order and history but
-  are never playable.
+- `ArtworkResolverTest`, `DeezerArtworkProviderTest` and `ArtworkMatchingTest` — chain order, strict
+  title/artist matching, high-res URL promotion, Deezer cover selection and live CAA lookup.
 - `HomepagePlanTest` — maturity thresholds, no personalised sections for new users, shortcuts only
   for real playlists, relative timestamps.
-- `ArtworkResolverTest` — catalog artwork wins, missing metadata is not guessed, and a live
-  MusicBrainz/Cover Art Archive lookup returns a real cover URL.
 - `PlaybackEngineTest` — JavaFX decodes a bundled local MP3 and advances.
 - `YouTubeLyricsTest` — LRCLIB returned synced lines for the mapped track.
 - `LiveLyricsProviderTest` — Unison returned 16 word-synced English lines; lrc.red returned 44

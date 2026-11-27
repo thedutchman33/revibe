@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
+import com.revibe.image.artworkLoadCandidates
 import com.revibe.ui.theme.RevibeColors
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -33,6 +34,9 @@ class SkiaArtworkLoader(
     private val memory = ConcurrentHashMap<String, CacheEntry>()
     private val inFlight = ConcurrentHashMap<String, Any>()
 
+    /** Network bytes are kept apart from embedded local artwork in the same cache root. */
+    private val diskDir = File(cacheDir, "remote").apply { mkdirs() }
+
     init {
         cacheDir.mkdirs()
     }
@@ -54,7 +58,13 @@ class SkiaArtworkLoader(
 
         return try {
             val bytes = withContext(Dispatchers.IO) { readBytes(url) } ?: return null
-            val artwork = withContext(Dispatchers.Default) { decode(bytes) } ?: return null
+            var artwork = withContext(Dispatchers.Default) { decode(bytes) }
+            if (artwork == null && !url.startsWith("file:")) {
+                // A truncated or stale cache entry must not permanently break
+                // the cover; drop it and let the next load fetch it again.
+                withContext(Dispatchers.IO) { cacheFile(url).delete() }
+            }
+            artwork ?: return null
             memory[key] = CacheEntry(artwork)
             if (memory.size > 90) {
                 memory.keys.take(memory.size - 90).forEach(memory::remove)
@@ -66,17 +76,52 @@ class SkiaArtworkLoader(
     }
 
     private fun readBytes(url: String): ByteArray? {
-        return runCatching {
-            if (url.startsWith("file:")) {
-                File(URI(url)).readBytes()
-            } else {
-                val response: HttpResponse = kotlinx.coroutines.runBlocking {
-                    client.get(url)
-                }
-                if (!response.status.isSuccess()) return null
+        if (url.startsWith("file:")) {
+            return runCatching { File(URI(url)).readBytes() }.getOrNull()
+        }
+        cacheFile(url).takeIf { it.isFile }?.let { cached ->
+            runCatching { cached.readBytes() }.getOrNull()?.let { return it }
+        }
+        for (candidate in artworkLoadCandidates(url)) {
+            val bytes = runCatching {
+                val response: HttpResponse = kotlinx.coroutines.runBlocking { client.get(candidate) }
+                if (!response.status.isSuccess()) return@runCatching null
                 kotlinx.coroutines.runBlocking { response.body<ByteArray>() }
+            }.getOrNull() ?: continue
+            if (bytes.isEmpty()) continue
+            writeCache(url, bytes)
+            return bytes
+        }
+        return null
+    }
+
+    private fun cacheFile(url: String): File = File(diskDir, cacheFileName(url))
+
+    private fun writeCache(url: String, bytes: ByteArray) {
+        runCatching {
+            val target = cacheFile(url)
+            val temp = File(diskDir, target.name + ".tmp")
+            temp.writeBytes(bytes)
+            if (!temp.renameTo(target)) {
+                target.delete()
+                temp.renameTo(target)
             }
-        }.getOrNull()
+            pruneDiskCache()
+        }
+    }
+
+    /** Keeps the artwork cache bounded without touching embedded local art. */
+    private fun pruneDiskCache() {
+        val files = diskDir.listFiles { file -> file.isFile && file.name.endsWith(".img") } ?: return
+        if (files.size <= MAX_DISK_FILES) return
+        var remaining = files.size
+        var bytes = files.sumOf { it.length() }
+        files.sortedBy { it.lastModified() }.forEach { file ->
+            if (remaining <= MAX_DISK_FILES && bytes <= MAX_DISK_BYTES) return@forEach
+            bytes -= file.length()
+            remaining--
+            file.delete()
+        }
     }
 
     private fun decode(bytes: ByteArray): LoadedArtwork? {
@@ -136,9 +181,13 @@ class SkiaArtworkLoader(
         blue = from.blue + (to.blue - from.blue) * fraction,
     )
 
-    @Suppress("unused")
     private fun cacheFileName(url: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(url.toByteArray())
         return digest.joinToString("") { "%02x".format(it) } + ".img"
+    }
+
+    private companion object {
+        const val MAX_DISK_FILES = 320
+        const val MAX_DISK_BYTES = 192L * 1024 * 1024
     }
 }

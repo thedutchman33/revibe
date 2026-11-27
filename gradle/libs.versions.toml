@@ -1,9 +1,11 @@
 [versions]
-kotlin = "2.1.21"
-compose = "1.8.2"
-coroutines = "1.10.2"
-ktor = "3.1.3"
-serialization = "1.8.1"
+kotlin = "2.4.21"
+compose = "1.12.2"
+coroutines = "1.11.0"
+ktor = "3.6.0"
+serialization = "1.12.0"
+innertubex = "v0.13.1"
+vlcj = "4.12.1"
 sqlite = "3.49.1.0"
 jaudiotagger = "3.0.1"
 javafx = "23.0.2"
@@ -27,6 +29,8 @@ javafx-graphics = { module = "org.openjfx:javafx-graphics", version.ref = "javaf
 javafx-base = { module = "org.openjfx:javafx-base", version.ref = "javafx" }
 jnativehook = { module = "com.github.kwhat:jnativehook", version.ref = "jnativehook" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+innertubex = { module = "com.github.MetrolistGroup.innertubex:innertubex", version.ref = "innertubex" }
+vlcj = { module = "uk.co.caprica:vlcj", version.ref = "vlcj" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

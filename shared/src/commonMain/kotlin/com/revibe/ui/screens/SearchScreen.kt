@@ -109,7 +109,7 @@ fun SearchScreen(vm: AppViewModel) {
                     }
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("Top", "Songs", "Albums", "Artists").forEachIndexed { index, label ->
+                            listOf("Top", "Songs", "Albums", "Artists", "Playlists").forEachIndexed { index, label ->
                                 Chip(label, vm.searchTab == index, onClick = { vm.selectSearchTab(index) })
                             }
                         }
@@ -166,6 +166,23 @@ fun SearchScreen(vm: AppViewModel) {
                                     }
                                 }
                             }
+                            if (results.playlists.isNotEmpty()) {
+                                item {
+                                    Column {
+                                        SectionHeader("Playlists")
+                                        Spacer(Modifier.height(12.dp))
+                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                            items(results.playlists, key = { it.id }) { playlist ->
+                                                MediaCard(
+                                                    item = playlist.toMediaItem(),
+                                                    onOpen = { vm.openAlbum(playlist) },
+                                                    onPlay = { vm.playAlbumById(playlist.id) },
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         1 -> itemsIndexed(results.tracks, key = { _, t -> t.id }) { index, track ->
                             SearchTrackRow(vm, track, index, results.tracks, state.current?.id, state.isPlaying)
@@ -191,7 +208,11 @@ fun SearchScreen(vm: AppViewModel) {
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                     Text(
-                                        "${album.artist} · ${album.year ?: "—"} · ${album.trackCount} songs",
+                                        buildString {
+                                            append(album.artist)
+                                            album.year?.let { append(" · ").append(it) }
+                                            if (album.trackCount > 0) append(" · ").append(album.trackCount).append(" songs")
+                                        },
                                         style = RevibeType.caption,
                                         color = RevibeColors.TextSecondary,
                                         maxLines = 1,
@@ -218,6 +239,40 @@ fun SearchScreen(vm: AppViewModel) {
                                     Text(artist.genre ?: "Artist", style = RevibeType.caption, color = RevibeColors.TextSecondary)
                                 }
                                 Text("View artist", style = RevibeType.caption, color = RevibeColors.TextTertiary)
+                            }
+                        }
+                        4 -> items(results.playlists, key = { it.id }) { playlist ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { vm.openAlbum(playlist) }
+                                    .pointerHoverIcon(PointerIcon.Hand)
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                Artwork(playlist.artworkUrl, Modifier.size(56.dp), cornerRadius = 4.dp)
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        playlist.title,
+                                        style = RevibeType.bodyStrong,
+                                        color = RevibeColors.TextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        buildString {
+                                            append(playlist.artist)
+                                            if (playlist.trackCount > 0) append(" · ").append(playlist.trackCount).append(" songs")
+                                        },
+                                        style = RevibeType.caption,
+                                        color = RevibeColors.TextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = RevibeColors.TextTertiary)
                             }
                         }
                     }
@@ -261,7 +316,7 @@ private fun BrowseAll(vm: AppViewModel) {
     ) {
         Text("Browse all", style = RevibeType.display.copy(fontSize = 30.sp), color = RevibeColors.TextPrimary)
         Spacer(Modifier.height(4.dp))
-        Text("Search the open catalog, or start with a genre.", style = RevibeType.body, color = RevibeColors.TextSecondary)
+        Text("Search the catalog, or start with a genre.", style = RevibeType.body, color = RevibeColors.TextSecondary)
         if (vm.recentSearches.isNotEmpty()) {
             Spacer(Modifier.height(18.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

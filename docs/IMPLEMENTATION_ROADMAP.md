@@ -1,79 +1,97 @@
 # Implementation Roadmap
 
-Status vocabulary: **Implemented**, **Partially implemented**, **Mocked** (none in shipped code),
-**Not implemented**, **Blocked**.
+Milestone: **0.7.0 — native queue, catalog cleanup, provider research**.
+Canonical research report: [RESEARCH_REPORT_0_7.md](RESEARCH_REPORT_0_7.md).
 
-## Phase 0 — Research and architecture: Implemented
+Status vocabulary: **Implemented**, **Partially implemented**, **Not implemented**, **Blocked**.
 
-- Cloned and inspected Metrolist, InnerTubeX, BitChord and VIVI Music (GPL-3.0), plus API checks.
-- Produced repository research, dependency matrix, licence/compliance, architecture, source,
-  playback, lyrics, metadata, UI, schema and build documents.
-- Chose the catalog, audio, storage and UI strategies with explicit trade-offs.
+## Stage 1 — Research and architecture: Implemented
 
-## Phase 1 — Windows foundation: Implemented
+- InnerTubeX v0.13.1 inspected; `next()` and continuation verified with live rows.
+- Metrolist, BitChord and VIVI queue approaches studied; no code copied (GPL-3.0 respected).
+- MusicBrainz, Cover Art Archive, Last.fm, ListenBrainz, Spotify, Canvas and recognition access
+  verified or explicitly rejected. See [PROVIDER_INTEGRATION_MATRIX.md](PROVIDER_INTEGRATION_MATRIX.md).
+- Native queue divergence explained in [QUEUE_ENGINE.md](QUEUE_ENGINE.md).
+- Homepage maturity and section rules designed in [DYNAMIC_HOMEPAGE.md](DYNAMIC_HOMEPAGE.md).
 
-- KMP module + Compose Desktop app, Gradle wrapper, version catalog.
-- Revibe design system, frameless shell, sidebar, top bar, right panel, persistent player.
-- SQLite persistence and reactive settings.
-- Navigation history, loading/empty/error states.
+## Stage 2 — Native queue: Implemented
 
-## Phase 2 — Music integration: Implemented (single authorised source)
+- `next(WEB_REMIX, videoId, playlistId = "RDAMVM<videoId>")`, continuation tokens, provider order.
+- Manual Play Next/Add to Queue priority; autoplay off; failure and stale-context guards.
+- 40-row live queue and 40-row continuation verified.
+- Tests: native order, continuation, manual priority, autoplay off, failure, stale context,
+  auto-advance, history.
 
-- iTunes Search provider behind `CatalogSource`; search, album, artist, discography, artwork.
-- Unified track/album/artist models, namespaced ids, storefront selection.
-- Wikipedia artist biography enrichment with attribution.
-- YouTube Music / InnerTubeX: **Blocked** by provider terms. Not shipped.
+## Stage 4 — Provider architecture: Partially implemented
 
-## Phase 3 — Playback: Partially implemented
+Done:
 
-- Implemented: JavaFX engine, preview streaming, local MP3/M4A/AAC/WAV/AIFF, queue, shuffle, repeat,
-  seek, volume, error recovery, real progress, history, media keys.
-- Not implemented: FLAC/OGG/OPUS playback, gapless, crossfade, equalizer, normalization, audio device
-  selection, SMTC overlay, resume position after restart.
-- Next: native engine spike (VLCJ vs FFmpeg), then SMTC bridge.
+1. Provider interfaces defined (`ArtworkProvider`, `MusicMetadataProvider`, `LyricsProvider`,
+   `RecognitionProvider`, `ListeningHistoryProvider`, `ExternalAccountProvider`,
+   `VisualBackgroundProvider`).
+2. MusicBrainz + Cover Art Archive artwork adapter: exact album/artist matching, 1 req/s gate,
+   User-Agent, in-memory cache, 8 s timeout, live test, no playback impact.
+3. Artwork resolver prefers catalog artwork and is wired into Now Playing, footer and miniplayer.
+4. Central lyrics resolver: LRCLIB primary, lrc.red and Unison fallbacks, TTML word/line parsing,
+   title/artist/version/duration guards, SQLite cache, source credit links. Live English and Hindi
+   tests pass ([LYRICS_PROVIDER_ARCHITECTURE.md](LYRICS_PROVIDER_ARCHITECTURE.md)).
 
-## Phase 4 — Lyrics and advanced player: Partially implemented
+Remaining:
 
-- Implemented: LRCLIB, plain/LRC/word-sync parsing, auto-scroll, offset, caching, provider label,
-  artwork palette theming.
-- Not implemented: translation, romanization, lyrics editor, multi-provider priority UI, audio
-  information/statistics screen, equalizer.
-- Next: extract a multi-provider lyrics registry when the second reviewed provider lands.
+5. SQLite artwork cache and release-group matching.
+6. Last.fm is blocked on an app key (and Pro from 1 Dec 2026); ListenBrainz needs an opt-in user token.
+7. Spotify OAuth metadata import only; never playback or credentials.
+8. Apple Music/Tidal artwork need private/credentialed APIs; not added.
+9. Canvas remains unimplemented and documented ([SPOTIFY_CANVAS_INTEGRATION.md](SPOTIFY_CANVAS_INTEGRATION.md)).
+10. Recognition remains blocked until a licensed Windows-capable provider and consent flow exist.
 
-## Phase 5 — Library: Partially implemented
+## Stage 5 — Dynamic homepage: Implemented (first pass)
 
-- Implemented: liked songs/albums, followed artists, playlists CRUD + ordering, history, local file
-  scanning/tagging/art, offline local playback.
-- Not implemented: playlist folders, smart playlists, import/export, downloads of catalog tracks
-  (not permitted for preview-only content), duplicate resolution UI.
-- Next: playlist import/export (JSON + M3U), backup/restore.
+Implemented: `UserActivitySnapshot` + SQL aggregates, `UserMaturityService`,
+`HomepageSectionManager`, NEW/EARLY/ACTIVE/ESTABLISHED plans, Getting Started, real playlist
+shortcuts, recently played, provider-seeded Made For You/top artist mixes, followed artists,
+discovery, timestamps, category empty states.
 
-## Phase 6 — Services: Not implemented
+Not implemented: returning-user boost, genre-derived mixes, per-section cache and the full
+loading/error matrix for every provider shelf.
 
-Spotify OAuth metadata import, Last.fm, ListenBrainz, Discord presence, SponsorBlock, Cast/DLNA/SONOS,
-music recognition, Canvas artwork. Each needs its own terms review and adapter; none is faked.
+## Stage 6 — Right sidebar: Partially implemented
 
-## Phase 7 — Backend: Not implemented
+Implemented: Now Playing header/hero/like/lyrics preview/About/credits, queue and recently played
+tabs, native Up Next rows, manual queue controls, drag-and-drop reordering, autoplay toggle,
+close/reopen, persisted width, relative play timestamps, provider artwork.
 
-Listen Together rooms, cloud sync, accounts, remote config. Design constraint: no service keys in the
-client; a separate server owns secrets and realtime state. Reference servers were studied, not reused.
+The right rail now stays reachable at the 1120dp minimum by shrinking the library first.
 
-## Phase 8 — Other platforms: Not implemented
+Not implemented: full queue-row context menu, artwork prefetching, per-row "played at" actions.
 
-macOS, Linux, Android, iOS. The shared module and interfaces are ready; each target needs an audio
-engine, store implementation and window/shell work.
+## Stage 7 — Windows completion: Partially implemented
 
-## Immediate next five tasks
+Implemented: fullscreen player, media keys, resizable/collapsible shell, minimum-width layout,
+DPI-aware window/miniplayer sizing, real always-on-top miniplayer, keyboard shortcuts, honest
+device limitation.
 
-1. Fix the remaining UI contrast/hover details and add keyboard shortcuts.
-2. Add native FLAC/OGG/OPUS playback behind `PlaybackEngine`.
-3. Add disk cache for remote artwork and prefetch the next queue item's art.
-4. Add playlist import/export and a first-run local-library prompt.
-5. Wire SMTC on Windows (JNA WinRT projection or sidecar) and verify with the media overlay.
+Visual QA covered 1120/1200/1440dp at 125% DPI ([VISUAL_QA_0_8.md](VISUAL_QA_0_8.md)). Not implemented:
+device selection, notifications, friends activity, search pagination and persisted suggestions,
+accessibility pass, full DPI matrix, long-session soak.
 
-## Explicit non-goals for this milestone
+## Stage 8 — Accounts and cloud: Not implemented (blocked on a project)
 
-- No YouTube/InnerTube streaming client.
-- No Spotify audio streaming.
-- No DRM bypass, paid-access circumvention or credential extraction.
-- No simulated playback or fabricated metadata.
+Supabase auth/sync requires a real Supabase project URL, anon key and redirect configuration to
+implement and verify. None is present in this repository, so no untested auth code was added.
+The design constraint is fixed: SQLite stays authoritative offline, sync is additive and
+conflict-aware, and no service-role key may ship in the client.
+
+## Stage 9 — Final QA: Ongoing
+
+- `./gradlew :shared:desktopTest` (**181 tests, 0 failures, 46 suites**), live queue/artwork/lyrics diagnostics.
+- Visual QA at 1120/1200/1440dp on 125% DPI, with remaining states documented.
+- Still required: clean-machine MSI/EXE install, full DPI matrix, network interruption and
+  long-session tests, maturity-state and miniplayer visual checks, accessibility.
+
+## Explicit non-goals
+
+- No DRM bypass, paid-access circumvention, cookie/token scraping or credential extraction.
+- No Spotify/Apple/Tidal audio playback.
+- No undocumented Spotify Canvas access.
+- No fabricated metadata, history, rankings or recommendations.

@@ -28,9 +28,13 @@ interface PlaybackEngine {
 
 enum class RepeatMode { OFF, ALL, ONE }
 
+/**
+ * Queue rows are the source of truth. [queue] remains a derived track view so
+ * existing screens and tests keep working during the queue migration.
+ */
 data class PlayerState(
     val current: Track? = null,
-    val queue: List<Track> = emptyList(),
+    val entries: List<QueueEntry> = emptyList(),
     val index: Int = -1,
     val isPlaying: Boolean = false,
     val isBuffering: Boolean = false,
@@ -41,16 +45,23 @@ data class PlayerState(
     val repeat: RepeatMode = RepeatMode.OFF,
     val error: String? = null,
     val contextName: String = "",
-    val previewOnly: Boolean = false,
+    val autoplayEnabled: Boolean = true,
+    val autoplayState: AutoplayState = AutoplayState.IDLE,
+    val autoplayMessage: String? = null,
 ) {
+    val queue: List<Track>
+        get() = entries.map { it.track }
+
     val hasNext: Boolean
         get() = when {
-            queue.isEmpty() -> false
+            entries.isEmpty() -> false
             repeat == RepeatMode.ALL -> true
-            index < queue.lastIndex -> true
+            index < entries.lastIndex -> true
+            autoplayEnabled && autoplayState != AutoplayState.EXHAUSTED &&
+                autoplayState != AutoplayState.FAILED -> true
             else -> false
         }
 
     val hasPrevious: Boolean
-        get() = queue.isNotEmpty() && (index > 0 || positionMs > 3000)
+        get() = entries.isNotEmpty() && (index > 0 || positionMs > 3000)
 }

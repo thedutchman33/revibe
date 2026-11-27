@@ -52,11 +52,16 @@ System sans (Segoe UI on Windows), tight tracking on display sizes.
 - Window: 1440×900 default, minimum 1120×720, frameless with custom controls and edge resize.
 - Top bar: 64 px — history arrows, home pill, centred search (max 520 px), settings, profile,
   window controls.
-- Sidebar: 288 px expanded / 76 px compact. Logo, Home, Search, library header, filter chips,
-  Liked Songs, playlists, saved albums, followed artists, local files, Settings.
-- Content: scrollable, 24 px left gutter, 16 px right gutter.
-- Right panel: 344 px, tabs Now playing / Lyrics / Queue.
-- Player bar: 94 px, always visible.
+- Three containers with 8 dp drag gutters. Side panels are resizable and persisted.
+- Sidebar: 280 dp default, 220–420 dp range, 72 dp compact rail. Logo, Home, Search, library header,
+  filter chips, Liked Songs, playlists, saved albums, followed artists, local files, Settings.
+- Content: scrollable, centre minimum 480 dp; 24 dp left gutter, 16 dp right gutter; clipped to a
+  rounded surface.
+- Right panel: 340 dp default, 280–420 dp range, closable and reopened from Queue/Lyrics; tabs Now
+  playing / Lyrics / Queue.
+- Player bar: 94 dp, always visible outside the resized workspace.
+- Persisted layout: `leftPanelWidth`, `rightPanelWidth`, `compactSidebar`, `showRightPanel`.
+  Contract and clamps live in `model/LayoutSpec.kt`; evidence in `docs/revibe-layout/`.
 
 Shelves are horizontal rows of 168 px artwork cards. Track tables use an index column, title/artist,
 album, duration, like and overflow. Rows are 56 px high with 6 px radius hover.

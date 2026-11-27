@@ -1,43 +1,28 @@
 package com.revibe
 
-import com.revibe.catalog.ITunesCatalogSource
 import com.revibe.playback.JavaFxPlaybackEngine
 import com.revibe.playback.PlaybackEngine
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.http.ContentType
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.Json
+import java.io.File
 import kotlin.test.Test
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * Plays a real catalog preview through the desktop engine and waits for decoder
- * progress. This is the check that separates real playback from a mocked one.
+ * Decodes the bundled FFmpeg-generated tone through the desktop engine and
+ * waits for real position progress. This is the check that separates actual
+ * playback from a mocked one, without depending on a network catalog.
  */
 class PlaybackEngineTest {
 
     @Test
-    fun `engine decodes a real preview stream`() = runBlocking {
-        val client = HttpClient(CIO) {
-            expectSuccess = false
-            install(ContentNegotiation) {
-                val format = Json { ignoreUnknownKeys = true; isLenient = true; explicitNulls = false }
-                json(format)
-                json(format, contentType = ContentType.Text.JavaScript)
-            }
-            install(HttpTimeout) { requestTimeoutMillis = 20_000; connectTimeoutMillis = 10_000 }
+    fun `engine decodes a local media file`() = runBlocking {
+        val resource = requireNotNull(javaClass.getResource("/media/tone.mp3")) {
+            "bundled test media is missing"
         }
-        val track = ITunesCatalogSource(client)
-            .searchTracks("arijit singh", "IN", 12)
-            .firstOrNull { !it.streamUrl.isNullOrBlank() }
-        assertNotNull(track, "catalog returned no preview URL to play")
+        val media = File(resource.toURI())
 
         val engine = JavaFxPlaybackEngine()
         val firstProgress = CompletableDeferred<Long>()
@@ -70,13 +55,12 @@ class PlaybackEngineTest {
             },
         )
 
-        engine.load(track!!.streamUrl!!, autoPlay = true)
+        engine.load(media.toURI().toString(), autoPlay = true)
         val position = runCatching { withTimeout(30_000) { firstProgress.await() } }
         println("[audio] position=${position.getOrDefault(-1)} error=$lastError")
         engine.release()
-        // The toolkit keeps a non-daemon thread alive; shut it down so the test worker exits.
-        javafx.application.Platform.runLater { javafx.application.Platform.exit() }
-        kotlinx.coroutines.delay(300)
+        // Keep the JavaFX toolkit alive: the YouTube playback test shares it.
+        delay(300)
 
         assertTrue(position.isSuccess, "engine did not advance: ${lastError ?: position.exceptionOrNull()?.message}")
         assertTrue(position.getOrDefault(0) > 0)

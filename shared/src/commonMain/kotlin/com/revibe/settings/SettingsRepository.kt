@@ -2,6 +2,7 @@ package com.revibe.settings
 
 import com.revibe.library.LibraryStore
 import com.revibe.model.AppSettings
+import com.revibe.model.LayoutSpec
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +18,15 @@ class SettingsRepository(private val store: LibraryStore) {
             volume = store.getSetting("volume")?.toFloatOrNull() ?: current.volume,
             showRightPanel = store.getSetting("showRightPanel")?.toBooleanStrictOrNull() ?: current.showRightPanel,
             compactSidebar = store.getSetting("compactSidebar")?.toBooleanStrictOrNull() ?: current.compactSidebar,
+            // Migrate pre-Spotify-parity layouts that were saved narrower than the
+            // library rail can now render; keep deliberate widths above the minimum.
+            leftPanelWidth = store.getSetting("leftPanelWidth")?.toFloatOrNull()
+                ?.takeIf { it >= LayoutSpec.LEFT_MIN }
+                ?.let(LayoutSpec::clampLeft) ?: current.leftPanelWidth,
+            rightPanelWidth = store.getSetting("rightPanelWidth")?.toFloatOrNull()
+                ?.let(LayoutSpec::clampRight) ?: current.rightPanelWidth,
+            autoplayEnabled = store.getSetting("autoplayEnabled")?.toBooleanStrictOrNull() ?: current.autoplayEnabled,
+            syncSearchHistory = store.getSetting("syncSearchHistory")?.toBooleanStrictOrNull() ?: current.syncSearchHistory,
         )
     }
 
@@ -40,5 +50,28 @@ class SettingsRepository(private val store: LibraryStore) {
     suspend fun setCompactSidebar(compact: Boolean) {
         _settings.value = _settings.value.copy(compactSidebar = compact)
         store.setSetting("compactSidebar", compact.toString())
+    }
+
+    suspend fun setAutoplayEnabled(enabled: Boolean) {
+        _settings.value = _settings.value.copy(autoplayEnabled = enabled)
+        store.setSetting("autoplayEnabled", enabled.toString())
+    }
+
+    /** Privacy control: synced search history is opt-in per account. */
+    suspend fun setSyncSearchHistory(enabled: Boolean) {
+        _settings.value = _settings.value.copy(syncSearchHistory = enabled)
+        store.setSetting("syncSearchHistory", enabled.toString())
+    }
+
+    /** Persists both drag-resizable panels together to avoid a torn layout state. */
+    suspend fun setPanelWidths(left: Float, right: Float) {
+        val clampedLeft = LayoutSpec.clampLeft(left)
+        val clampedRight = LayoutSpec.clampRight(right)
+        _settings.value = _settings.value.copy(
+            leftPanelWidth = clampedLeft,
+            rightPanelWidth = clampedRight,
+        )
+        store.setSetting("leftPanelWidth", clampedLeft.toString())
+        store.setSetting("rightPanelWidth", clampedRight.toString())
     }
 }

@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.revibe.image.ArtworkLoader
 import com.revibe.image.LoadedArtwork
+import com.revibe.image.highResolutionArtworkUrl
 import com.revibe.ui.theme.RevibeColors
 
 val LocalArtworkLoader = staticCompositionLocalOf<ArtworkLoader> {
@@ -46,10 +47,14 @@ fun Artwork(
     onArtworkLoaded: (LoadedArtwork) -> Unit = {},
 ) {
     val loader = LocalArtworkLoader.current
-    var artwork by remember(url) { mutableStateOf<LoadedArtwork?>(null) }
+    // Rows saved by older builds may still store an `hqdefault` URL. Promote
+    // at display time as well as at parse time so the library is not stuck
+    // with thumbnail-sized artwork.
+    val loadUrl = remember(url) { url?.let(::highResolutionArtworkUrl) }
+    var artwork by remember(loadUrl) { mutableStateOf<LoadedArtwork?>(null) }
 
-    LaunchedEffect(url) {
-        artwork = if (url.isNullOrBlank()) null else loader.load(url)
+    LaunchedEffect(loadUrl) {
+        artwork = if (loadUrl.isNullOrBlank()) null else loader.load(loadUrl)
         artwork?.let(onArtworkLoaded)
     }
 

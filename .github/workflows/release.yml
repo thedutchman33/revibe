@@ -1,0 +1,194 @@
+name: Release Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without v (for example 0.10.0)"
+        required: true
+        type: string
+      minimum_version:
+        description: "Oldest version allowed to stay installed (0.0.0 disables forced upgrade)"
+        required: false
+        default: "0.0.0"
+        type: string
+      mandatory:
+        description: "Mark this release mandatory"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      release_notes:
+        description: "Release notes (used when release-notes/<version>.md is absent)"
+        required: false
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve release metadata
+        shell: pwsh
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+          DISPATCH_MINIMUM: ${{ inputs.minimum_version }}
+          DISPATCH_MANDATORY: ${{ inputs.mandatory }}
+          DISPATCH_NOTES: ${{ inputs.release_notes }}
+          PUBLISHER: ${{ vars.WINDOWS_PUBLISHER }}
+        run: |
+          $version = $env:DISPATCH_VERSION
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = "$env:GITHUB_REF_NAME".TrimStart("v")
+          }
+          $version = $version.Trim().TrimStart("v")
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "MSI packageVersion must be three numeric parts, for example 0.10.0. Got '$version'."
+          }
+          $minimum = $env:DISPATCH_MINIMUM
+          if ([string]::IsNullOrWhiteSpace($minimum)) { $minimum = "0.0.0" }
+          if ($minimum -notmatch '^\d+\.\d+\.\d+$') {
+            throw "minimum_version must be three numeric parts. Got '$minimum'."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:PUBLISHER)) {
+            throw "Repository variable WINDOWS_PUBLISHER is required (for example 'CN=Revibe, O=Revibe')."
+          }
+          $mandatory = if ($env:DISPATCH_MANDATORY -eq "true") { "true" } else { "false" }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "MINIMUM_VERSION=$minimum" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "MANDATORY=$mandatory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PUBLISHER=$env:PUBLISHER" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build MSI and embed update feed
+        shell: pwsh
+        run: |
+          $manifestUrl = "https://github.com/${{ github.repository }}/releases/latest/download/update-manifest.json"
+          & .\gradlew.bat :desktopApp:packageMsi `
+            "-PrevibeVersion=$env:VERSION" `
+            "-PrevibeUpdateManifestUrl=$manifestUrl" `
+            "-PrevibePublisher=$env:PUBLISHER" `
+            --console=plain
+          if ($LASTEXITCODE -ne 0) { throw "Gradle packaging failed." }
+
+      - name: Sign and verify the MSI
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64)) {
+            throw "WINDOWS_CERTIFICATE_BASE64 is required; unsigned releases are not publishable."
+          }
+          $msi = Get-ChildItem "desktopApp/build/compose/binaries/main/msi" -Filter "*.msi" |
+            Select-Object -First 1
+          if ($null -eq $msi) { throw "No MSI was produced." }
+          $pfx = Join-Path $env:RUNNER_TEMP "revibe-signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
+            -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if ($null -eq $signtool) { throw "signtool.exe was not found on the runner." }
+          try {
+            & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+              /f $pfx /p $env:CERTIFICATE_PASSWORD $msi.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed." }
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $msi.FullName
+          if ($signature.Status -ne "Valid") {
+            throw "Authenticode verification failed: $($signature.Status)"
+          }
+          if ($signature.SignerCertificate.Subject -notlike "*$env:PUBLISHER*") {
+            throw "Signed subject '$($signature.SignerCertificate.Subject)' does not match WINDOWS_PUBLISHER."
+          }
+
+      - name: Generate SHA-256 and version manifest
+        shell: pwsh
+        env:
+          DISPATCH_NOTES: ${{ inputs.release_notes }}
+        run: |
+          $msi = Get-ChildItem "desktopApp/build/compose/binaries/main/msi" -Filter "*.msi" |
+            Select-Object -First 1
+          if ($null -eq $msi) { throw "No MSI was produced." }
+          $dist = Join-Path $PWD "dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item $msi.FullName (Join-Path $dist $msi.Name)
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $msi.FullName).Hash.ToLowerInvariant()
+          $assetName = [uri]::EscapeDataString($msi.Name)
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/v$env:VERSION/$assetName"
+
+          $notesFile = Join-Path $PWD "release-notes/$env:VERSION.md"
+          if (-not (Test-Path -LiteralPath $notesFile)) {
+            $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.md"
+            $notes = if ([string]::IsNullOrWhiteSpace($env:DISPATCH_NOTES)) {
+              "See the GitHub release page for Revibe $env:VERSION."
+            } else {
+              $env:DISPATCH_NOTES
+            }
+            [IO.File]::WriteAllText($notesFile, $notes, (New-Object Text.UTF8Encoding($false)))
+          }
+          $notes = Get-Content -Raw -LiteralPath $notesFile
+
+          $manifest = [ordered]@{
+            latestVersion = $env:VERSION
+            minimumVersion = $env:MINIMUM_VERSION
+            downloadUrl = $downloadUrl
+            releaseNotes = $notes.Trim()
+            mandatory = ($env:MANDATORY -eq "true")
+            sha256 = $hash
+            publishedAt = (Get-Date).ToUniversalTime().ToString("o")
+          }
+          $manifestPath = Join-Path $dist "update-manifest.json"
+          [IO.File]::WriteAllText(
+            $manifestPath,
+            ($manifest | ConvertTo-Json -Depth 4),
+            (New-Object Text.UTF8Encoding($false))
+          )
+          "NOTES_FILE=$notesFile" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "MSI_PATH=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:VERSION"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists." }
+          $msi = Get-ChildItem "dist" -Filter "*.msi" | Select-Object -First 1
+          gh release create $tag $msi.FullName "dist/update-manifest.json" `
+            --title "Revibe $env:VERSION" `
+            --notes-file "$env:NOTES_FILE"
+
+      - name: Release summary
+        shell: pwsh
+        run: |
+          "Published Revibe $env:VERSION" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- MSI SHA-256: ``$env:SHA256``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- Manifest: https://github.com/${{ github.repository }}/releases/latest/download/update-manifest.json" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

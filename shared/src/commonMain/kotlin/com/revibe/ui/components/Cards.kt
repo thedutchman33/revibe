@@ -52,6 +52,7 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.revibe.model.Track
 import com.revibe.model.formatDuration
 import com.revibe.ui.MediaItem
@@ -81,7 +82,7 @@ fun MediaCard(
     onOpen: () -> Unit,
     onPlay: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
-    cardWidth: Int = 168,
+    cardWidth: Int = 132,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -100,14 +101,14 @@ fun MediaCard(
                 modifier = Modifier
                     .size(cardWidth.dp)
                     .scale(scale),
-                cornerRadius = if (item.round) (cardWidth / 2).dp else 6.dp,
+                cornerRadius = if (item.round) (cardWidth / 2).dp else 4.dp,
             )
             if (hovered && onPlay != null) {
                 Box(
                     Modifier
                         .align(Alignment.BottomEnd)
                         .offset(x = (-8).dp, y = (-8).dp)
-                        .size(40.dp)
+                        .size(48.dp)
                         .clip(CircleShape)
                         .background(RevibeColors.Accent)
                         .clickable(onClick = onPlay)
@@ -118,15 +119,15 @@ fun MediaCard(
                         Icons.Rounded.PlayArrow,
                         contentDescription = "Play",
                         tint = RevibeColors.OnAccent,
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(28.dp),
                     )
                 }
             }
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
             text = item.title,
-            style = RevibeType.title,
+            style = RevibeType.bodyStrong.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
             color = RevibeColors.TextPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -135,7 +136,7 @@ fun MediaCard(
         Spacer(Modifier.height(3.dp))
         Text(
             text = item.subtitle,
-            style = RevibeType.caption,
+            style = RevibeType.caption.copy(fontSize = 12.sp),
             color = RevibeColors.TextSecondary,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -150,15 +151,18 @@ fun ShelfRow(
     title: String,
     items: List<MediaItem>,
     subtitle: String? = null,
+    eyebrow: String? = null,
+    action: String? = null,
+    onAction: (() -> Unit)? = null,
     onOpenItem: (MediaItem) -> Unit,
     onPlayItem: ((MediaItem) -> Unit)? = null,
-    contentPadding: PaddingValues = PaddingValues(end = 12.dp),
+    contentPadding: PaddingValues = PaddingValues(end = 24.dp),
 ) {
     Column {
-        SectionHeader(title = title, subtitle = subtitle)
-        Spacer(Modifier.height(14.dp))
+        SectionHeader(title = title, subtitle = subtitle, eyebrow = eyebrow, action = action, onAction = onAction)
+        Spacer(Modifier.height(16.dp))
         LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
             contentPadding = contentPadding,
         ) {
             items(items, key = { "$shelfId-${it.id}" }) { item ->
@@ -291,7 +295,10 @@ fun TrackRow(
                             ),
                     )
                     if (track.explicit) MiniBadge("E")
-                    if (track.isPreview) MiniBadge("30s")
+                    when {
+                        track.isArchived -> MiniBadge("Archived")
+                        track.isLocal -> MiniBadge("Local")
+                    }
                 }
             }
 
@@ -410,43 +417,64 @@ fun QueueRow(
     index: Int,
     isCurrent: Boolean,
     onPlay: () -> Unit,
-    onRemove: () -> Unit,
+    onRemove: (() -> Unit)? = null,
+    badge: String? = null,
+    reason: String? = null,
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .clickable(onClick = onPlay)
+            .height(56.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(if (hovered) Color.White.copy(alpha = 0.06f) else Color.Transparent)
+            .hoverable(interaction)
+            .clickable(interactionSource = interaction, indication = null, onClick = onPlay)
             .pointerHoverIcon(PointerIcon.Hand)
-            .padding(horizontal = 6.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Artwork(track.artworkUrl ?: track.localPath, Modifier.size(38.dp), cornerRadius = 4.dp)
+        Artwork(track.artworkUrl ?: track.localPath, Modifier.size(40.dp), cornerRadius = 4.dp)
         Column(Modifier.weight(1f)) {
             Text(
                 track.title,
-                style = RevibeType.caption.copy(fontWeight = FontWeight.SemiBold),
+                style = RevibeType.body.copy(fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium),
                 color = if (isCurrent) RevibeColors.Accent else RevibeColors.TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                track.artist,
-                style = RevibeType.caption,
-                color = RevibeColors.TextSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(
+                    track.artist,
+                    style = RevibeType.body.copy(fontSize = 12.sp, lineHeight = 16.sp),
+                    color = RevibeColors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (badge != null) MiniBadge(badge)
+            }
+            if (reason != null) {
+                Text(
+                    reason,
+                    style = RevibeType.caption.copy(fontSize = 10.sp),
+                    color = RevibeColors.TextTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (onRemove != null && hovered) {
+            IconAction(
+                icon = Icons.Rounded.Close,
+                contentDescription = "Remove from queue",
+                onClick = onRemove,
+                size = 26.dp,
+                iconSize = 15.dp,
+                tint = RevibeColors.TextSecondary,
             )
         }
-        Text(formatDuration(track.durationMs), style = RevibeType.caption, color = RevibeColors.TextTertiary)
-        IconAction(
-            icon = Icons.Rounded.Close,
-            contentDescription = "Remove from queue",
-            onClick = onRemove,
-            size = 26.dp,
-            iconSize = 14.dp,
-            tint = RevibeColors.TextTertiary,
-        )
     }
 }

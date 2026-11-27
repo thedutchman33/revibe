@@ -140,18 +140,22 @@ fun RevibeButton(
     modifier: Modifier = Modifier,
     kind: ButtonKind = ButtonKind.Accent,
     icon: ImageVector? = null,
+    enabled: Boolean = true,
+    /** Centres the label, for full-width calls to action. */
+    centered: Boolean = false,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val background = when (kind) {
-        ButtonKind.Accent -> if (hovered) RevibeColors.AccentHover else RevibeColors.Accent
-        ButtonKind.Ghost -> if (hovered) RevibeColors.SurfaceHover else Color.Transparent
-        ButtonKind.Outline -> if (hovered) RevibeColors.SurfaceHover else Color.Transparent
+    val background = when {
+        !enabled -> RevibeColors.SurfaceActive
+        kind == ButtonKind.Accent -> if (hovered) RevibeColors.AccentHover else RevibeColors.Accent
+        hovered -> RevibeColors.SurfaceHover
+        else -> Color.Transparent
     }
-    val textColor = when (kind) {
-        ButtonKind.Accent -> RevibeColors.OnAccent
-        ButtonKind.Ghost -> RevibeColors.TextPrimary
-        ButtonKind.Outline -> RevibeColors.TextPrimary
+    val textColor = when {
+        !enabled -> RevibeColors.TextTertiary
+        kind == ButtonKind.Accent -> RevibeColors.OnAccent
+        else -> RevibeColors.TextPrimary
     }
     Row(
         modifier
@@ -161,11 +165,11 @@ fun RevibeButton(
                 if (kind == ButtonKind.Outline) Modifier.background(Color.Transparent) else Modifier,
             )
             .hoverable(interaction)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .pointerHoverIcon(PointerIcon.Hand)
+            .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick)
+            .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
             .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = if (centered) Arrangement.Center else Arrangement.spacedBy(8.dp),
     ) {
         icon?.let {
             Icon(it, contentDescription = null, tint = textColor, modifier = Modifier.size(18.dp))
@@ -186,6 +190,7 @@ fun Chip(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    horizontalPadding: Dp = 14.dp,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -201,12 +206,12 @@ fun Chip(
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .pointerHoverIcon(PointerIcon.Hand)
-            .padding(horizontal = 14.dp, vertical = 7.dp),
+            .padding(horizontal = horizontalPadding, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = text,
-            style = RevibeType.label,
+            style = RevibeType.label.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
             color = if (selected) RevibeColors.OnAccent else RevibeColors.TextPrimary,
             maxLines = 1,
         )
@@ -220,15 +225,25 @@ fun SectionHeader(
     subtitle: String? = null,
     action: String? = null,
     onAction: (() -> Unit)? = null,
+    eyebrow: String? = null,
 ) {
     Row(
         modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Bottom,
     ) {
         Column(Modifier.weight(1f)) {
+            eyebrow?.let {
+                Text(
+                    it,
+                    style = RevibeType.label.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
+                    color = RevibeColors.TextPrimary,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(3.dp))
+            }
             Text(
                 text = title,
-                style = RevibeType.heading,
+                style = RevibeType.heading.copy(fontSize = 24.sp, lineHeight = 29.sp, fontWeight = FontWeight.Bold),
                 color = RevibeColors.TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -241,7 +256,7 @@ fun SectionHeader(
         if (action != null && onAction != null) {
             Text(
                 text = action,
-                style = RevibeType.caption.copy(fontWeight = FontWeight.Bold),
+                style = RevibeType.caption.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
                 color = RevibeColors.TextSecondary,
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
@@ -259,11 +274,13 @@ fun SearchField(
     onValueChange: (String) -> Unit,
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
+    height: Dp = 40.dp,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     Row(
         modifier
-            .height(44.dp)
+            .height(height)
             .clip(CircleShape)
             .background(if (focused) RevibeColors.SurfaceRaised else RevibeColors.Surface)
             .padding(horizontal = 14.dp),
@@ -305,6 +322,10 @@ fun SearchField(
                 iconSize = 15.dp,
             )
         }
+        trailing?.let {
+            Box(Modifier.width(1.dp).height(20.dp).background(Color.White.copy(alpha = 0.18f)))
+            it()
+        }
     }
 }
 
@@ -320,6 +341,7 @@ fun SeekBar(
     accent: Color = RevibeColors.Accent,
     enabled: Boolean = true,
     trackHeight: Dp = 4.dp,
+    trackColor: Color = Color.White.copy(alpha = 0.16f),
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -364,7 +386,7 @@ fun SeekBar(
             val barHeight = size.height
             val radius = CornerRadius(barHeight / 2f, barHeight / 2f)
             drawRoundRect(
-                color = Color.White.copy(alpha = if (enabled) 0.16f else 0.07f),
+                color = if (enabled) trackColor else Color.White.copy(alpha = 0.07f),
                 size = Size(size.width, barHeight),
                 cornerRadius = radius,
             )
@@ -486,6 +508,8 @@ fun RevibeTextField(
     onValueChange: (String) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
+    isPassword: Boolean = false,
+    enabled: Boolean = true,
 ) {
     Box(
         modifier
@@ -500,8 +524,10 @@ fun RevibeTextField(
             value = value,
             onValueChange = onValueChange,
             singleLine = true,
+            enabled = enabled,
             textStyle = RevibeType.body.copy(color = RevibeColors.TextPrimary),
             cursorBrush = androidx.compose.ui.graphics.SolidColor(RevibeColors.Accent),
+            visualTransformation = if (isPassword) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
             modifier = Modifier.fillMaxWidth(),
             decorationBox = { inner ->
                 Box {

@@ -1,6 +1,9 @@
 # Revibe Directory Tree
 
-Generated from the working tree at milestone 1. Build outputs, the Gradle distribution,
+> **Historical snapshot (0.2.0).** The current source layout is described in
+> [MUSIC_SOURCE_ARCHITECTURE.md](MUSIC_SOURCE_ARCHITECTURE.md).
+
+Generated from the working tree at milestone 0.2.0. Build outputs, the Gradle distribution,
 reference checkouts and supplied media are git-ignored.
 
 ```
@@ -40,7 +43,6 @@ Revibe/
 │       │   ├── catalog/
 │       │   │   ├── CatalogSource.kt
 │       │   │   ├── CatalogRepository.kt
-│       │   │   ├── ITunesCatalogSource.kt
 │       │   │   └── WikipediaArtistKnowledge.kt
 │       │   ├── image/ArtworkLoader.kt
 │       │   ├── library/
@@ -83,6 +85,33 @@ Revibe/
     ├── build.gradle.kts
     └── src/desktopMain/kotlin/com/revibe/desktop/Main.kt
 ```
+
+## YouTube Music additions (0.2.0)
+
+```
+shared/src/commonMain/kotlin/com/revibe/
+├── youtube/YouTubeMusicSource.kt
+├── catalog/MusicSourceManager.kt
+└── playback/TrackStreamResolver.kt
+
+shared/src/desktopMain/kotlin/com/revibe/playback/
+├── DesktopTrackStreamResolver.kt
+└── LocalStreamProxy.kt
+
+shared/src/desktopTest/kotlin/com/revibe/youtube/
+├── InnerTubeXIntegrationTest.kt
+├── YouTubeSearchTest.kt
+├── YouTubeTrackMappingTest.kt
+├── YouTubePlaybackResolutionTest.kt
+├── YouTubeStreamCompatibilityTest.kt
+├── YouTubePlaybackEngineTest.kt
+├── YouTubeQueueTest.kt
+├── YouTubeLyricsTest.kt
+└── YouTubeTestHarness.kt
+```
+
+`CatalogSource.kt` exposes `idPrefix` and `searchAll` for every catalog source. Project-level
+`PROJECT_STATUS.md` and `CHANGELOG.md` sit at the repository root.
 
 ## Not present (intentionally, for now)
 

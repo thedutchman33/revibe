@@ -1,6 +1,8 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+val revibeVersion = providers.gradleProperty("revibeVersion").get()
+
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.compose.multiplatform)
@@ -28,20 +30,22 @@ compose.desktop {
     application {
         mainClass = "com.revibe.desktop.MainKt"
 
-        jvmArgs += listOf("-Dfile.encoding=UTF-8")
+        jvmArgs += listOf("-Dfile.encoding=UTF-8", "-Drevibe.version=$revibeVersion")
 
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "Revibe"
-            packageVersion = "0.1.0"
+            packageVersion = revibeVersion
             description = "Revibe - Your music. Your vibe."
             vendor = "Revibe"
             copyright = "Copyright 2026 Revibe"
-            modules("java.sql", "java.naming", "jdk.unsupported")
+            modules("java.sql", "java.naming", "jdk.httpserver", "jdk.unsupported")
             windows {
                 menuGroup = "Revibe"
                 shortcut = true
                 dirChooser = true
+                perUserInstall = true
+                upgradeUuid = "96abee54-a741-4118-b1cd-23080db60d33"
             }
         }
     }
