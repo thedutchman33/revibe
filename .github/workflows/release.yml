@@ -55,6 +55,7 @@ jobs:
           DISPATCH_VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
           git fetch --tags --force
 
           function Set-Output([string]$name, [string]$value) {
@@ -535,6 +536,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
           git fetch --tags --force
           git show-ref --tags --verify --quiet "refs/tags/$env:TAG"
           if ($LASTEXITCODE -eq 0) { throw "Tag $env:TAG already exists." }
