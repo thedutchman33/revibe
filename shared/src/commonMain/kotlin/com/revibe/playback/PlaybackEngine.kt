@@ -4,7 +4,7 @@ import com.revibe.model.Track
 
 /**
  * The only audio surface shared code sees. Each platform provides its own engine:
- * JavaFX Media on desktop (milestone 1), Media3 on Android, AVFoundation on Apple.
+ * FFmpeg + Java Sound on Windows desktop, Media3 on Android, AVFoundation on Apple.
  */
 interface PlaybackEngine {
     fun setListener(listener: Listener)

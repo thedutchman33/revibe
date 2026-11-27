@@ -63,11 +63,15 @@ data class YouTubeStream(
     val mimeType: String?,
     val codecs: String?,
     val itag: Int,
+    val bitrate: Int?,
+    val sampleRate: Int?,
     val expiresAtEpochMs: Long?,
     val clientName: String,
     val note: String,
 ) {
-    override fun toString(): String = "YouTubeStream(itag=$itag, mime=$mimeType, client=$clientName)"
+    override fun toString(): String =
+        "YouTubeStream(itag=$itag, mime=$mimeType, codecs=$codecs, bitrate=$bitrate, " +
+            "sampleRate=$sampleRate, client=$clientName)"
 }
 
 class YouTubeSourceException(
@@ -78,10 +82,10 @@ class YouTubeSourceException(
 
 /**
  * YouTube Music through InnerTubeX. Search/browse calls use the public
- * WEB_REMIX client; playback uses InnerTubeX's extraction stack and accepts
- * only progressive MP4/AAC, which the existing JavaFX engine can decode.
- * SABR/UMP and WebM/Opus are reported as UNSUPPORTED_TRANSPORT, not silently
- * dropped, and local files remain independently playable.
+ * WEB_REMIX client; playback uses InnerTubeX's extraction stack and currently
+ * accepts only progressive MP4/AAC, which the desktop FFmpeg engine decodes.
+ * SABR/UMP and WebM/Opus are reported as UNSUPPORTED_TRANSPORT by the resolver,
+ * not silently dropped, and local files remain independently playable.
  */
 class YouTubeMusicSource(
     private val http: HttpClient,
@@ -327,10 +331,14 @@ class YouTubeMusicSource(
     // --------------------------------------------------------------- playback
 
     /**
-     * Resolves a track and returns only a stream the desktop engine can decode.
-     * The first attempt asks InnerTubeX for MP4/AAC; if YouTube only offers
-     * WebM/Opus or SABR, the documented progressive client is tried. If neither
-     * is compatible the caller gets UNSUPPORTED_TRANSPORT with the real codec.
+     * Resolves a track to the best free-account audio stream Revibe can decode.
+     *
+     * Free YouTube Music exposes five audio-only formats. Their bitrates line up
+     * with the required preference order, so a single `AudioQuality.HIGH`
+     * request selects 251 (Opus 160k) before 140 (AAC 128k), then 250 (Opus
+     * 70k), 249 (Opus 50k) and 139 (AAC 48k). Protected formats such as 141 are
+     * rejected and never requested with premium capabilities. If adaptive
+     * audio is unavailable the documented progressive client is the fallback.
      */
     suspend fun resolveStream(track: Track, forceRefresh: Boolean = false): YouTubeStream {
         val videoId = track.id.removePrefix("${idPrefix}track:")
@@ -398,8 +406,12 @@ class YouTubeMusicSource(
 
         data class Attempt(val label: String, val hints: ContentHints, val quality: AudioQuality)
         val attempts = listOf(
+            Attempt("best-free", autoHints, AudioQuality.HIGH),
+            // Defensive fallbacks: a premium-only format must never be used.
+            // These only run when HIGH did not return one of the free itags.
+            Attempt("auto", autoHints, AudioQuality.AUTO),
             Attempt("mp4", autoHints, AudioQuality.MP4),
-            Attempt("high", autoHints, AudioQuality.HIGH),
+            Attempt("low", autoHints, AudioQuality.LOW),
             Attempt("progressive", progressiveHints, AudioQuality.HIGH),
         )
 
@@ -408,27 +420,41 @@ class YouTubeMusicSource(
         for (attempt in attempts) {
             try {
                 val stream = extraction.extract(videoId, attempt.hints, audioQuality = attempt.quality) ?: continue
-                if (isJavaFxCompatible(stream)) {
-                    setStatus(YouTubeAvailability.AVAILABLE, "${attempt.label} stream ready · itag ${stream.itag}")
+                val accepted = if (attempt.label == "progressive") {
+                    isFreeAudioStream(stream) || isProgressiveAacCompatible(stream)
+                } else {
+                    isFreeAudioStream(stream)
+                }
+                if (accepted) {
+                    logSelectedStream(track, attempt.label, stream)
+                    setStatus(
+                        YouTubeAvailability.AVAILABLE,
+                        "${attempt.label} stream ready · itag ${stream.itag}",
+                    )
                     return YouTubeStream(
                         url = stream.audioUrl,
                         headers = stream.headers,
                         mimeType = stream.mimeType,
                         codecs = stream.codecs,
                         itag = stream.itag,
+                        bitrate = stream.bitrate,
+                        sampleRate = stream.sampleRate,
                         expiresAtEpochMs = stream.expiresAt?.toEpochMilliseconds(),
                         clientName = stream.clientName,
-                        note = if (stream.mimeType?.startsWith("audio/") == true) {
-                            "Online catalog · AAC"
-                        } else {
-                            "Online catalog · progressive MP4/AAC"
+                        note = when {
+                            stream.itag in OPUS_ITAGS -> "Online catalog · Opus"
+                            stream.mimeType?.startsWith("audio/") == true -> "Online catalog · AAC"
+                            else -> "Online catalog · progressive MP4/AAC"
                         },
                     )
                 }
+                // A format outside the free audio ladder (for example a
+                // premium-only 141) is not an error by itself: try the next
+                // quality request, but never fall back to it silently.
                 incompatible = stream
                 setStatus(
                     YouTubeAvailability.UNSUPPORTED_TRANSPORT,
-                    "Received ${stream.mimeType ?: "unknown"} (${stream.codecs ?: "unknown codec"})",
+                    "Skipped ${stream.mimeType ?: "unknown"} itag ${stream.itag}",
                 )
             } catch (error: StreamResolveException) {
                 lastFailure = error
@@ -446,8 +472,8 @@ class YouTubeMusicSource(
         if (incompatible != null) {
             throw YouTubeSourceException(
                 YouTubeAvailability.UNSUPPORTED_TRANSPORT,
-                "The catalog only returned ${incompatible.mimeType ?: "an unknown format"}; " +
-                    "Revibe's resolver currently requires progressive MP4/AAC; SABR/UMP needs a dedicated transport.",
+                "The catalog only returned ${incompatible.mimeType ?: "an unknown format"} " +
+                    "(itag ${incompatible.itag}); no free audio-only stream Revibe can decode was available.",
                 lastFailure,
             )
         }
@@ -475,6 +501,18 @@ class YouTubeMusicSource(
                 else -> "The catalog could not resolve this track."
             },
             lastFailure,
+        )
+    }
+
+    private fun logSelectedStream(track: Track, attempt: String, stream: ExtractedStream) {
+        // No signed URL or header value is included. This is the selection log
+        // used to verify free-account quality on real tracks.
+        println(
+            "[stream] selected track=\"${track.title}\" attempt=$attempt itag=${stream.itag} " +
+                "mime=${stream.mimeType} codec=${stream.codecs ?: "unknown"} " +
+                "bitrate=${stream.bitrate?.let { "$it bps" } ?: "unknown"} " +
+                "sampleRate=${stream.sampleRate?.let { "$it Hz" } ?: "unknown"} " +
+                "client=${stream.clientName}",
         )
     }
 
@@ -969,16 +1007,47 @@ class YouTubeMusicSource(
     }
 }
 
-/** True only for formats the JavaFX desktop engine can decode. */
-fun isJavaFxCompatible(stream: ExtractedStream): Boolean =
-    isJavaFxCompatible(
+/** Free-account audio-only itags, in the required preference order. */
+internal val FREE_AUDIO_ITAGS = listOf(251, 140, 250, 249, 139)
+private val OPUS_ITAGS = setOf(251, 250, 249)
+
+/**
+ * True only for the free audio-only formats Revibe deliberately selects.
+ * Premium-only formats (for example 141) are rejected even if the extractor
+ * happens to return one, so the player never depends on an account tier.
+ */
+fun isFreeAudioStream(stream: ExtractedStream): Boolean {
+    if (stream.sabrBootstrap != null) return false
+    if (stream.audioUrl.isBlank()) return false
+    return isFreeAudioStream(
+        itag = stream.itag,
+        mimeType = stream.mimeType,
+        codecs = stream.codecs,
+    )
+}
+
+fun isFreeAudioStream(itag: Int, mimeType: String?, codecs: String?): Boolean {
+    val index = FREE_AUDIO_ITAGS.indexOf(itag)
+    if (index < 0) return false
+    val mime = mimeType?.lowercase() ?: return false
+    val codec = codecs?.lowercase().orEmpty()
+    return if (itag in OPUS_ITAGS) {
+        mime.startsWith("audio/webm") && (codec.isEmpty() || codec.contains("opus"))
+    } else {
+        mime.startsWith("audio/mp4") && (codec.isEmpty() || codec.contains("mp4a"))
+    }
+}
+
+/** True only for the progressive MP4/AAC streams the resolver can use as a fallback. */
+fun isProgressiveAacCompatible(stream: ExtractedStream): Boolean =
+    isProgressiveAacCompatible(
         mimeType = stream.mimeType,
         codecs = stream.codecs,
         hasSabrBootstrap = stream.sabrBootstrap != null,
         url = stream.audioUrl,
     )
 
-fun isJavaFxCompatible(
+fun isProgressiveAacCompatible(
     mimeType: String?,
     codecs: String?,
     hasSabrBootstrap: Boolean,

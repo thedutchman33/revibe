@@ -167,9 +167,13 @@ fun createDesktopGraph(): AppGraph {
         append(selectedEngine.name)
     }
 
+    // Environment wins for development; a packaged installer carries the
+    // publishable project URL/key baked in by the release build.
     val cloudConfig = CloudConfig(
-        url = System.getenv(CloudEnvironment.URL_KEY).orEmpty(),
-        anonKey = System.getenv(CloudEnvironment.ANON_KEY).orEmpty(),
+        url = System.getenv(CloudEnvironment.URL_KEY)?.takeIf { it.isNotBlank() }
+            ?: RevibeBuildInfo.supabaseUrl,
+        anonKey = System.getenv(CloudEnvironment.ANON_KEY)?.takeIf { it.isNotBlank() }
+            ?: RevibeBuildInfo.supabaseAnonKey,
     )
     val auth = AuthManager(
         config = cloudConfig,

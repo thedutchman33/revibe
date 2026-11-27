@@ -96,7 +96,7 @@ shared/src/commonMain/kotlin/com/revibe/
 
 shared/src/desktopMain/kotlin/com/revibe/playback/
 ├── DesktopTrackStreamResolver.kt
-└── LocalStreamProxy.kt
+└── DesktopStreamHeaders.kt
 
 shared/src/desktopTest/kotlin/com/revibe/youtube/
 ├── InnerTubeXIntegrationTest.kt

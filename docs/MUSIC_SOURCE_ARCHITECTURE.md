@@ -79,18 +79,21 @@ an explicit message instead of being sent to YouTube Music.
 - **Pagination:** `searchContinuation` exists in the source but is not exposed by the multi-source UI.
 - **Mapping:** raw JSON is parsed into Revibe models immediately; InnerTubeX models never reach the
   screen. IDs are re-prefixed (`ytm:`).
-- **Stream resolution:** `DesktopTrackStreamResolver` prefers itag 140 (`audio/mp4`, AAC), with the
-  progressive itag 18 fallback. WebM/Opus/HLS/SABR are reported as `UNSUPPORTED_TRANSPORT` rather than
-  handed to an engine that may not decode them.
-- **Proxy:** `LocalStreamProxy` returns `http://127.0.0.1:<port>/stream.m4a`, forwards Range and
-  headers, and keeps signed URLs out of the player.
+- **Stream resolution:** `DesktopTrackStreamResolver` asks for the highest free-account audio
+  bitrate and validates the result. The accepted order is itag **251** (Opus), **140** (AAC), **250**
+  (Opus), **249** (Opus), **139** (AAC); the progressive itag 18 MP4/AAC stream is the last fallback.
+  Premium-only formats such as 141 are rejected, as are SABR/HLS transports. The selected itag,
+  codec, bitrate and sample rate are logged; playback stays on that stream until URL expiry.
+- **Transport:** FFmpeg opens the signed URL directly. `DesktopStreamHeaders` supplies the
+  extraction headers to the player, so signed URLs and cookies stay out of the playback API and UI.
+  A loopback re-server was removed because FFmpeg's seek failed at some byte boundaries through it.
 - **Expiry:** URLs are cached briefly and re-resolved once after an engine error.
 
 ## Availability policy
 
 | Source | Status | Reason |
 | --- | --- | --- |
-| YouTube Music (InnerTubeX) | Active | Anonymous web/player API; MP4/AAC only |
+| YouTube Music (InnerTubeX) | Active | Anonymous web/player API; free Opus/AAC audio-only streams |
 | Local Files | Active | User-owned files |
 | Archived | Inactive (data only) | Retained rows from the removed preview catalog |
 | Spotify | Inactive | Official API allows metadata/playlist import with OAuth, not audio streaming |

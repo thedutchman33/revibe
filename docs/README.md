@@ -24,7 +24,7 @@ documents separate tested logic from still-pending live-service work. Previous v
 | [DYNAMIC_HOMEPAGE.md](DYNAMIC_HOMEPAGE.md) | Maturity states, section eligibility/ordering, test matrix |
 | [REVIBE_ARCHITECTURE.md](REVIBE_ARCHITECTURE.md) | Modules, layers, threading, decisions, multiplatform path |
 | [MUSIC_SOURCE_ARCHITECTURE.md](MUSIC_SOURCE_ARCHITECTURE.md) | Catalog contract, single playback source, archived rows, error handling |
-| [PLAYBACK_ENGINE.md](PLAYBACK_ENGINE.md) | Engine contract, LibVLC/JavaFX, queue semantics, gaps |
+| [PLAYBACK_ENGINE.md](PLAYBACK_ENGINE.md) | Engine contract, FFmpeg + Java Sound, preload/seek, latency, gaps |
 | [METADATA_AND_ARTWORK.md](METADATA_AND_ARTWORK.md) | Active metadata/artwork sources and pipeline |
 | [DEPENDENCY_MATRIX.md](DEPENDENCY_MATRIX.md) | Toolchain, libraries, services, licence flags |
 | [ACCOUNT_SYNC.md](ACCOUNT_SYNC.md) | Supabase setup, account/session security, sync cycle, conflicts, tests, pending live E2E |
@@ -48,7 +48,7 @@ Historical planning documents (kept for traceability, not current status):
 ## Status in one line
 
 Windows desktop app with real YouTube Music search, playlists, full AAC playback and native Up Next
-queue through InnerTubeX; LibVLC native audio with JavaFX fallback; local library; LRCLIB lyrics with
+queue through InnerTubeX; bundled FFmpeg 8.1.2 audio with Java Sound output; local library; LRCLIB lyrics with
 lrc.red and Unison fallbacks; SQLite likes, playlists and history; maturity-driven home, real
 recent-playlist recency, miniplayer and right sidebar with history timestamps. YouTube Music artwork
 is primary, with MusicBrainz/CAA and Deezer fallbacks implemented. Supabase accounts and multi-device

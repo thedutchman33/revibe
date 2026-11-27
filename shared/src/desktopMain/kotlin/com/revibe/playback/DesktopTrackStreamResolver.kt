@@ -5,14 +5,17 @@ import com.revibe.model.Track
 import com.revibe.youtube.YouTubeMusicSource
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.File
 
 /**
  * Desktop implementation: local file URIs pass through, YouTube streams are
- * resolved and exposed through the loopback `.m4a` proxy.
+ * resolved to their signed URL. FFmpeg opens the signed URL directly with the
+ * resolver's headers, which is also the URL shape its demuxer knows how to
+ * seek; a loopback re-server can break seeks at some byte boundaries.
  *
- * Resolved proxy URIs are retained until the signed source URL is close to
- * expiry. That makes a queue prefetch and the subsequent click return the exact
- * same URI, which lets the engine preload it and start immediately.
+ * Resolved URLs are retained until the signed source URL is close to expiry.
+ * That makes a queue prefetch and the subsequent click return the exact same
+ * URI, which lets the engine preload it and start immediately.
  */
 class DesktopTrackStreamResolver(
     private val youtube: YouTubeMusicSource,
@@ -22,7 +25,6 @@ class DesktopTrackStreamResolver(
         val validUntilMs: Long,
     )
 
-    private val proxy = LocalStreamProxy()
     private val prepared = mutableMapOf<String, Prepared>()
     private val preparedMutex = Mutex()
 
@@ -37,9 +39,10 @@ class DesktopTrackStreamResolver(
         }
         return try {
             val stream = youtube.resolveStream(track, forceRefresh)
-            val localUrl = proxy.expose(stream.url, stream.headers, stream.mimeType)
+            logSelected(track, stream)
+            DesktopStreamHeaders.put(stream.url, stream.headers)
             val resolved = ResolvedStream(
-                localUrl,
+                stream.url,
                 note = stream.note,
                 expiresAtEpochMs = stream.expiresAtEpochMs,
             )
@@ -53,8 +56,8 @@ class DesktopTrackStreamResolver(
     }
 
     /**
-     * Resolves and exposes the next stream without touching the active audio
-     * engine. The returned proxy URI stays valid until the signed URL expiry.
+     * Resolves the next stream without touching the active audio engine. The
+     * returned signed URI stays valid until the signed URL expiry.
      */
     override suspend fun prefetch(track: Track): ResolvedStream? {
         if (track.source != MusicSourceId.YOUTUBE_MUSIC) return null
@@ -63,7 +66,21 @@ class DesktopTrackStreamResolver(
     }
 
     override fun close() {
-        proxy.close()
+        DesktopStreamHeaders.clear()
+    }
+
+    /** Selection evidence for installed runs; contains no signed URL or headers. */
+    private fun logSelected(track: com.revibe.model.Track, stream: com.revibe.youtube.YouTubeStream) {
+        val line = "[stream] selected track=\"${track.title}\" itag=${stream.itag} " +
+            "mime=${stream.mimeType} codec=${stream.codecs ?: "unknown"} " +
+            "bitrate=${stream.bitrate?.let { "$it bps" } ?: "unknown"} " +
+            "sampleRate=${stream.sampleRate?.let { "$it Hz" } ?: "unknown"} " +
+            "client=${stream.clientName}"
+        println(line)
+        val path = System.getenv("REVIBE_DEBUG_LOG")
+            ?: System.getProperty("revibe.debugLog")
+            ?: return
+        runCatching { File(path).appendText("${System.currentTimeMillis()} $line\n") }
     }
 
     private suspend fun cached(trackId: String): ResolvedStream? = preparedMutex.withLock {

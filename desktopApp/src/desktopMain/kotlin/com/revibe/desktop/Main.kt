@@ -54,6 +54,8 @@ import java.awt.Window
 import javax.imageio.ImageIO
 
 fun main() {
+    // Must be set before the first window is shown.
+    WindowsAppIdentity.install()
     val graph = createDesktopGraph()
     val vm = AppViewModel(graph)
     val mediaKeys = DesktopMediaKeys(
@@ -113,7 +115,7 @@ fun main() {
             LaunchedEffect(Unit) {
                 window.minimumSize = Dimension(1120, 720)
                 window.background = java.awt.Color(8, 9, 10)
-                AppIcon.load()?.let { window.iconImage = it }
+                AppIcon.applyTo(window)
                 mediaKeys.install()
             }
             DisposableEffect(Unit) {
@@ -184,7 +186,7 @@ fun main() {
             ) {
                 LaunchedEffect(Unit) {
                     window.minimumSize = Dimension(356, 300)
-                    AppIcon.load()?.let { window.iconImage = it }
+                    AppIcon.applyTo(window)
                 }
                 // The compact window is a separate composition, so it must provide the
                 // artwork loader and theme itself or Artwork throws on first frame.
@@ -237,6 +239,12 @@ private object AppIcon {
     fun load(): Image? = runCatching {
         AppIcon::class.java.getResourceAsStream("/revibe.png")?.use { ImageIO.read(it) }
     }.getOrNull()
+
+    fun applyTo(window: java.awt.Window) {
+        val image = load() ?: return
+        window.setIconImage(image)
+        WindowsAppIdentity.applyIcon(image)
+    }
 }
 
 @Composable

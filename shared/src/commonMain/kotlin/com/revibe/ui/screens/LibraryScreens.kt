@@ -400,7 +400,7 @@ fun LocalScreen(vm: AppViewModel) {
                     Text("Supported formats", style = RevibeType.bodyStrong, color = RevibeColors.TextPrimary)
                 }
                 Text(
-                    "MP3, M4A/AAC, WAV and AIFF play through the JavaFX engine. FLAC, OGG and OPUS are scanned, tagged and indexed, but full playback needs the native engine planned for the next milestone.",
+                    "MP3, M4A/AAC, WAV, AIFF, FLAC, OGG and OPUS play through the bundled FFmpeg engine.",
                     style = RevibeType.caption,
                     color = RevibeColors.TextSecondary,
                 )

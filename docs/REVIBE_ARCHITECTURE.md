@@ -14,7 +14,8 @@ Revibe/
 ├── shared/          Kotlin Multiplatform module
 │   ├── commonMain/  models, sources, source manager, YouTube adapter, repositories,
 │   │                player controller, lyrics, Compose UI
-│   └── desktopMain/ SQLite store, LibVLC/JavaFX engines, stream proxy, Skia artwork, scanner, Windows glue
+│   └── desktopMain/ SQLite store, FFmpeg engine + Java Sound, signed-stream headers,
+│                    Skia artwork, scanner, Windows glue
 ├── desktopApp/      Compose Desktop host, frameless window, media keys
 ├── docs/            research, design, schema and roadmap documents
 ├── tools/           development helpers (window capture)
@@ -40,10 +41,11 @@ Contracts (commonMain)             CatalogSource, TrackStreamResolver, ArtistKno
     ↓                              LibraryStore, PlaybackEngine, ArtworkLoader, LocalLibrary
 Desktop implementations (desktopMain)
     InnerTubeX client (common)     WikipediaArtistKnowledge (common)  ← HTTP via Ktor
-    DesktopTrackStreamResolver     LocalStreamProxy
+    DesktopTrackStreamResolver     DesktopStreamHeaders
     JdbcLibraryStore               DesktopPlaybackEngineFactory
-    SkiaArtworkLoader                -> VlcPlaybackEngine (LibVLC)
-    SwingFolderPicker                -> JavaFxPlaybackEngine (fallback)
+    SkiaArtworkLoader
+    SwingFolderPicker
+    DesktopPlaybackEngineFactory     -> FfmpegPlaybackEngine + JavaSoundSink
     DesktopLocalLibrary              DesktopMediaKeys
 ```
 
@@ -56,10 +58,10 @@ root; `createDesktopGraph()` is the only place that constructs concrete platform
 - Compose state is written from the Main dispatcher in `AppViewModel`.
 - HTTP and disk work runs on `Dispatchers.IO` / `Dispatchers.Default`.
 - The SQLite connection is serialised with a `Mutex` and used only off the UI thread.
-- LibVLC events arrive on native callback threads and JavaFX callbacks on the JavaFX application
-  thread; `PlayerController` publishes them through a `StateFlow`, which Compose collects. Engine
-  calls are kept behind the small `PlaybackEngine` interface so neither UI code nor queue logic sees
-  a native library type.
+- Each FFmpeg player owns one grabber, a decode thread, a render thread and one Java Sound line. An
+  engine worker serializes load/play/pause/seek commands, and listener callbacks are published through
+  a `StateFlow` that Compose collects. Engine calls stay behind the small `PlaybackEngine` interface,
+  so neither UI code nor queue logic sees a native library type.
 
 ## Counterfactual / decisions
 
@@ -67,8 +69,8 @@ root; `createDesktopGraph()` is the only place that constructs concrete platform
 | --- | --- | --- |
 | Primary catalog | YouTube Music via InnerTubeX v0.13.1 | Real full-length catalog, live search/browse, mapped into Revibe models |
 | Fallback catalog | None | The preview-only catalog was retired; archived rows are data, not a source |
-| YouTube transport | Progressive MP4/AAC + loopback proxy | Keeps extraction headers private and works with both engines; SABR still needs a dedicated transport |
-| Desktop audio | LibVLC via vlcj, JavaFX fallback | Native codec/HLS coverage with a native clock; falls back when VLC is absent |
+| YouTube transport | Progressive MP4/AAC direct in FFmpeg + resolver headers | Keeps signed URLs out of the UI and gives FFmpeg a seekable input; SABR still needs a dedicated transport |
+| Desktop audio | FFmpeg via JavaCV + Java Sound | One bundled decoder path, no external VLC install; Revibe owns the clock, seek and output buffer |
 | YouTube playlists | Map to `Album` + `isPlaylist`, import through `LibraryRepository` | Reuses the existing detail and playlist screens without a parallel model |
 | Persistence | Hand-written SQLite DAO behind `LibraryStore` | Avoids codegen coupling in milestone 1; schema is portable |
 | DI | Manual `AppGraph` | One module, ~15 objects; Koin can be introduced with Android/iOS |

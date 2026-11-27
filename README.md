@@ -4,8 +4,8 @@
 
 Revibe is an independent, Windows-first music application built with Kotlin Multiplatform and
 Compose Multiplatform. YouTube Music is the catalog, playback and queue authority through
-**InnerTubeX v0.13.1**, and your own files play through either the native **LibVLC** engine or the
-built-in JavaFX fallback.
+**InnerTubeX v0.13.1**, and your own files play through the bundled **FFmpeg** engine with native
+Windows audio output.
 
 This is a working application, not a mockup. See [Status](#status) for verified behaviour and exact
 limitations.
@@ -14,11 +14,10 @@ limitations.
 
 ## Run it
 
-Requirements: Windows 10/11, JDK 21+ (this machine uses JDK 23), and a network connection. **VLC is
-optional but recommended**: when a VLC runtime is available, Revibe uses LibVLC for FLAC/OGG/Opus,
-HLS and the full native playback path. Without VLC it falls back to JavaFX and the original formats.
-Set `REVIBE_VLC_HOME` if VLC is in a non-standard location, or `REVIBE_PLAYBACK_ENGINE=javafx` to
-force the fallback.
+Requirements: Windows 10/11, JDK 21+ (this machine uses JDK 23), and a network connection. Playback
+uses **FFmpeg 8.1.2 through JavaCV 1.5.14** and Java Sound; the Windows x64 native libraries ship in
+the app. No VLC, external `ffmpeg.exe`, GStreamer or JavaFX install is needed. JavaCPP extracts the
+natives to `%USERPROFILE%\.javacpp\cache` on first use, so the first launch is slightly slower.
 
 ```bash
 ./gradlew :desktopApp:run
@@ -86,12 +85,12 @@ currently opt in to the unsigned SHA-256-only path because no code-signing certi
 | YouTube album / artist pages | **Implemented** | Artwork, metadata, track lists, discography, top songs |
 | YouTube playlist search / details | **Implemented** | Real playlist browse and track lists |
 | Playlist import | **Implemented** | Copies a YouTube playlist into a local SQLite-backed Revibe playlist |
-| YouTube full playback | **Implemented** | Progressive MP4/AAC with next-track prefetch and a preloaded LibVLC player |
-| Native audio engine | **Implemented** | LibVLC 3.0.22 + vlcj 4.12.1; automatic JavaFX fallback |
-| Stream compatibility layer | **Implemented** | Loopback `.m4a` proxy forwards Range + headers; signed URLs stay out of the player |
+| YouTube full playback | **Implemented** | Progressive MP4/AAC with next-track prefetch and a pre-decoded PCM lead-in |
+| Native audio engine | **Implemented** | FFmpeg 8.1.2 via JavaCV 1.5.14; Java Sound output; bundled Windows x64 natives |
+| Stream compatibility layer | **Implemented** | Direct signed URL opened by FFmpeg with resolver headers; signed URLs stay out of the UI |
 | Native Up Next / radio | **Implemented** | InnerTubeX `next()` + continuation, provider order preserved |
 | Manual queue operations | **Implemented** | Play Next, Add to Queue, remove, reorder, clear; manual rows take priority |
-| Local library | **Implemented** | MP3/M4A/AAC/WAV/AIFF always; FLAC/OGG/Opus and HLS with LibVLC |
+| Local library | **Implemented** | MP3/M4A/AAC/WAV/AIFF/FLAC/OGG/Opus through FFmpeg |
 | Synced lyrics | **Implemented** | LRCLIB; line and word synchronisation |
 | Flexible three-container shell | **Implemented** | Drag-resizable library/right rail, collapse, close/reopen, persisted widths |
 | Dynamic home | **Implemented (first pass)** | Maturity from real activity; recent-playlist grid from real plays; provider-seeded personal mixes |
@@ -122,9 +121,9 @@ search / browse  ->  InnerTubeX (WEB_REMIX, anonymous session)
                          |
 playback         ->  InnerTubeExtractor (MP4/AAC first; progressive probe fallback)
                          |
-                    LocalStreamProxy (127.0.0.1, /stream/<token>.m4a, Range + headers)
+                    direct signed audio/mp4 URL + resolver headers
                          |
-                    LibVLC active + muted preloader (preferred) / JavaFX fallback
+                    FFmpeg decoder -> native-rate 16-bit PCM -> Java Sound
 
 native queue     ->  next(WEB_REMIX, videoId, playlistId = "RDAMVM<videoId>")
                          |
@@ -133,16 +132,21 @@ native queue     ->  next(WEB_REMIX, videoId, playlistId = "RDAMVM<videoId>")
 
 - Search and browse use InnerTubeX's public API; Revibe maps the raw YouTube Music JSON into its own
   `Track`/`Album`/`Artist` models. No InnerTubeX model reaches Compose.
-- The extractor prefers `audio/mp4` (itag 140, AAC). It falls back to the documented progressive
-  client (itag 18, muxed MP4/AAC) when needed. Formats neither engine can decode are surfaced with
-  the actual MIME/codec, not dropped.
-- The loopback proxy gives JavaFX a real `.m4a` endpoint, forwards `Range` requests and extraction
-  headers, and keeps signed URLs out of the player. Each stream gets its own token, so warming the
-  next track cannot replace the bytes the current player is still reading.
-- The next queue row is resolved in the background and cached until shortly before URL expiry;
-  LibVLC opens it in a muted spare player. Next swaps to that player instead of starting extraction
-  and native initialization from scratch. Clicking during a prefetch shares the same in-flight
-  request, and superseded Next/Previous loads are cancelled.
+- Free-account audio quality follows the required ladder: **251** (Opus 160k) → **140** (AAC 128k)
+  → **250** (Opus 70k) → **249** (Opus 50k) → **139** (AAC 48k). Revibe asks InnerTubeX for the
+  highest available otherwise-compatible bitrate and accepts only these itags, so a Premium-only
+  format such as 141 is never used. The documented progressive client (itag 18, muxed MP4/AAC) is
+  the last fallback. The selected itag, MIME, codec, bitrate and sample rate are logged, and the
+  engine logs the decoded rate and channel count.
+- FFmpeg opens the signed stream directly and receives the extraction headers through its `headers`
+  option. Signed URLs remain out of the playback API and UI. Direct transport is also required for
+  reliable seeking: an equivalent loopback re-server failed FFmpeg's seek at some byte boundaries.
+- The next queue row is resolved in the background and cached until shortly before URL expiry. The
+  FFmpeg preloader decodes three PCM frames; Next adopts that player and writes the lead-in
+  immediately instead of repeating extraction and native initialization. Clicking during a prefetch
+  shares the same in-flight request, and superseded Next/Previous loads are cancelled.
+- Decoded PCM keeps the source's native sample rate and channels; it is not forced through a 48 kHz
+  stereo resampler.
 - Stream URLs are cached briefly and re-resolved once if playback fails, because signed URLs expire.
 - The queue is YouTube Music's: rows are appended in provider order, then the continuation page,
   with no local scoring or artist substitution.
@@ -163,7 +167,7 @@ native queue     ->  next(WEB_REMIX, videoId, playlistId = "RDAMVM<videoId>")
 shared/
   commonMain/  domain, catalog sources, YouTube adapter, playback controller,
                native queue, lyrics, library contracts, Compose UI
-  desktopMain/ LibVLC engine + JavaFX fallback, loopback proxy, SQLite, local scanner,
+  desktopMain/ FFmpeg engine + Java Sound sink, signed-stream headers, SQLite, local scanner,
                platform wiring
 desktopApp/    entry point, frameless window, media keys
 ```
@@ -180,31 +184,48 @@ See [docs/REVIBE_ARCHITECTURE.md](docs/REVIBE_ARCHITECTURE.md),
 
 ## Verified
 
-The release gate runs **181 deterministic tests, 0 failures** (44 suites), including account/sync
-and update coverage. Four additional live YouTube transport checks are opt-in because GitHub's
-datacenter IPs currently receive SABR-only responses; run them with
+The current deterministic run covers **197 tests with no failures**, including account/sync, update
+and artwork fixtures. MusicBrainz/Cover Art Archive live behavior is a separate opt-in integration
+test (`REVIBE_ARTWORK_LIVE=1`); the deterministic artwork test uses MockEngine fixtures and never
+depends on the public service. Live YouTube transport checks are opt-in because GitHub's datacenter
+IPs can receive SABR-only responses; run them with
 `./gradlew :shared:desktopTest -PrevibeLiveTests=true`. The release workflow upgrades the previous
 Inno EXE release on a fresh Windows runner and verifies the result, data and relaunch.
 
-The suite includes live requests and real native playback:
+An installed Windows test build with a unique AppId was driven through real InnerTubeX playback:
+pause/resume, multiple forward and backward seeks, next/previous, rapid switching, restart-to-zero,
+artwork and lyrics loading, and sustained playback all passed through the Compose UI. The selected
+streams were itag 251 Opus at 48 kHz stereo.
+
+The opt-in live checks include real network requests and native playback:
 
 - `InnerTubeXIntegrationTest` — initializes and searches against YouTube Music.
 - `YouTubeSearchTest` — tracks, albums and artists return real results.
 - `YouTubeTrackMappingTest` — metadata, artwork, namespaced IDs, album/artist browse.
 - `YouTubePlaylistTest` — live playlist search/details and a real SQLite import.
-- `YouTubePlaybackResolutionTest` — resolves an AAC stream (itag 140 observed).
-- `YouTubeStreamCompatibilityTest` — accepts MP4/AAC; rejects unsupported SABR/HLS/WebM requests.
-- `YouTubePlaybackEngineTest` — JavaFX fallback plays the proxied stream.
-- `VlcPlaybackEngineTest` — 9 real-media checks: M4A/AAC/MP3/WAV/FLAC/OGG/WebM, local HLS, seek,
-  pause/resume, file URIs, end-of-track, error handling and a live YouTube stream.
+- `YouTubePlaybackResolutionTest` — resolves a free audio stream and asserts it is in the
+  251/140/250/249/139 ladder (itag 251 Opus observed on six live tracks).
+- `YouTubeStreamCompatibilityTest` — accepts the five free audio itags, rejects premium-only 141,
+  mismatched containers/codecs, SABR and HLS; progressive MP4/AAC remains a fallback.
+- `FfmpegPlaybackEngineTest` — 13 deterministic checks: M4A/AAC, AAC/ADTS, MP3, WAV, FLAC,
+  OGG/WebM/Opus, forward/backward seek (including MP4), restart-to-zero, pause/resume, prefetched
+  seek, rapid switching, long session, end-of-track, near-end completion and missing file, plus a
+  live YouTube Music stream.
+- `PreloadDurabilityProbe` — opt-in live check that an idle preload still starts in ~24 ms and that
+  a 45 s seek after the swap lands in ~1.1 s without restarting the track.
+- `FreeAudioQualityProbe` — opt-in live report of itag, codec, bitrate, advertised/decoded sample
+  rate and channels for six real tracks.
+- `LiveSeekMatrixProbe` — opt-in live timing of 10/45/90/25/150/0 s seeks and pause/resume.
 - `ExpiredStreamRecoveryTest` — a signed URL is refreshed exactly once before an error is shown.
 - `QueueEngineTest` — native order, continuation, manual priority, autoplay off, failures, stale
   context, auto-advance and history.
 - `ArtworkResolverTest`, `DeezerArtworkProviderTest` and `ArtworkMatchingTest` — chain order, strict
-  title/artist matching, high-res URL promotion, Deezer cover selection and live CAA lookup.
+  title/artist matching, high-res URL promotion, Deezer cover selection, MusicBrainz release and
+  recording lookups, 503 retry and cache behavior using deterministic MockEngine fixtures.
+- `MusicBrainzArtworkLiveTest` — opt-in (`REVIBE_ARTWORK_LIVE=1`) real MusicBrainz/CAA lookup, kept
+  out of the deterministic suite because the public service returns HTTP 503 when busy.
 - `HomepagePlanTest` — maturity thresholds, no personalised sections for new users, shortcuts only
   for real playlists, relative timestamps.
-- `PlaybackEngineTest` — JavaFX decodes a bundled local MP3 and advances.
 - `YouTubeLyricsTest` — LRCLIB returned synced lines for the mapped track.
 - `LiveLyricsProviderTest` — Unison returned 16 word-synced English lines; lrc.red returned 44
   word-synced Hindi lines for *Kesariya*.
@@ -233,11 +254,13 @@ Revibe is **not affiliated with Spotify, Apple, YouTube or any other service**. 
 DRM or paid access, harvest cookies, or extract credentials from other applications. Spotify Canvas
 is not integrated because it has no official API; Revibe refuses undocumented access paths.
 
-Linking InnerTubeX and vlcj (both GPL-3.0) means the combined Revibe distribution is **GPL-3.0**.
-LibVLC is LGPL-2.1+; if VLC is bundled, its notices and source-offer terms must ship too. The
-original Revibe code was MIT through checkpoint commit `b48101a`; it remains available under that
-licence at that commit. No source code from Metrolist, BitChord or VIVI Music was copied. The
-InnerTubeX and vlcj dependencies are unmodified and consumed from JitPack / Maven Central.
+Linking InnerTubeX and QuackJS (both GPL-3.0) means the combined Revibe distribution is **GPL-3.0**.
+JavaCV and JavaCPP are Apache-2.0 (also offered under GPL-2.0 terms); the bundled FFmpeg 8.1.2
+natives are the default Bytedeco build and are **LGPL-2.1-or-later**. Ship the FFmpeg licence/notice
+and corresponding-source offer with packaged builds. The original Revibe code was MIT through
+checkpoint commit `b48101a`; it remains available under that licence at that commit. No source code
+from Metrolist, BitChord or VIVI Music was copied. InnerTubeX, JavaCV, JavaCPP and FFmpeg are
+unmodified dependencies consumed from JitPack / Maven Central.
 
 YouTube Music extraction relies on InnerTube's web endpoints and is subject to YouTube's Terms of
 Service; review the current terms before distributing or commercialising the app. Lyrics come from

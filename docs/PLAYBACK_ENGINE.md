@@ -21,156 +21,199 @@ interface PlaybackEngine {
 }
 ```
 
-Everything else is platform-neutral. `PlayerController` owns the queue, shuffle order, repeat mode,
-history recording and error state; an engine only decodes audio. The desktop implementation is chosen
-at composition time by `DesktopPlaybackEngineFactory`.
+`PlayerController` owns the queue, shuffle order, repeat mode, history recording and error state; the
+engine only decodes and renders audio. Windows selects `FfmpegPlaybackEngine` through
+`DesktopPlaybackEngineFactory`.
 
-## Desktop selection (0.3.0)
+## Windows engine: FFmpeg + Java Sound
 
-| Runtime situation | Engine |
+There is no LibVLC, vlcj, JavaFX, external `ffmpeg.exe` or user-installed media runtime.
+
+| Layer | Implementation |
 | --- | --- |
-| LibVLC found and no override | **LibVLC** via VLCJ 4.12.1 |
-| No LibVLC found | **JavaFX Media** fallback |
-| `REVIBE_PLAYBACK_ENGINE=vlc` | LibVLC; reports a load error if the runtime is missing |
-| `REVIBE_PLAYBACK_ENGINE=javafx` | JavaFX Media |
+| Demux / decode | FFmpeg **8.1.2** through JavaCV **1.5.14** (`FFmpegFrameGrabber`) |
+| Native bridge | JavaCPP **1.5.14**, Windows x64 natives bundled as jars |
+| Decoded format | Signed 16-bit little-endian PCM at the stream's native sample rate and channel count |
+| Output | Java Sound `SourceDataLine`, the JVM's native Windows audio path |
+| Buffer | Approximately 150 ms line buffer; 15 decoded frames queued; 3-frame start prebuffer |
+| Volume | `MASTER_GAIN` when the Windows line exposes it, otherwise software gain on the PCM buffer |
+| Threads | One decode thread and one render thread per player; commands serialized on one engine worker |
+| UI boundary | `load`/`play`/`pause`/`seek`/`stop` enqueue commands; Compose never blocks on native I/O |
 
-The selected engine is printed once at startup (`[audio] Selected ...`) and shown in the Settings
-platform line. JavaFX is retained as a real fallback, not dead code; the existing playback test still
-instantiates it directly.
+FFmpeg is not forced to 48 kHz stereo. The selected free stream is decoded at its native format:
+itag 251 (Opus) is 48 kHz stereo, itag 140 (AAC) is 44.1 kHz stereo, and local files keep their own
+rate/channel count. No track is transcoded or resampled to a higher rate. Java Sound opens the
+default line first, then available mixers, with four bounded retries.
 
-## Engine evaluation
+## Free-account audio selection
 
-| Candidate | Format/transport coverage | Licence | Runtime / integration | Decision |
+`YouTubeMusicSource` requests `AudioQuality.HIGH` from InnerTubeX and accepts only these audio-only
+itags, in this order:
+
+| Priority | itag | Codec | Typical bitrate | Sample rate |
 | --- | --- | --- | --- | --- |
-| **LibVLC 3.0.22 + VLCJ 4.12.1** | MP4/AAC, HLS, WebM/Opus, FLAC, Ogg/Vorbis, MP3, WAV; seeking, buffering, duration, failure events | VLCJ **GPL-3.0**; libVLC **LGPL-2.1+** | Native VLC runtime must be installed or bundled; VLCJ is a small JVM binding | **Selected** for this phase |
-| GStreamer 1.x + gst1-java-core 1.4.0 | Broad codec coverage through plugins; HLS/WebM/Opus/FLAC | LGPL-3.0 bindings | GStreamer runtime + plugin set needed on every platform; pipeline/state integration is heavier | Rejected for the first POC; viable future LGPL option |
-| FFmpeg via JavaCV 1.5.14 | Very broad decode, HLS/WebM/Opus/FLAC; must build an audio-output and clock layer yourself | JavaCV Apache-2.0; FFmpeg build-dependent (GPL builds common) | Large platform natives; no player abstraction, seek/buffering/position must be implemented and maintained | Rejected for this phase; useful if YouTube-specific demuxing is added later |
-| JavaFX Media 23.0.2 | MP3, AAC/M4A, WAV, AIFF; progressive HTTP | GPL-2.0 + Classpath Exception | Ships with the app, no external install | **Kept as fallback** |
+| 1 | 251 | Opus (`audio/webm`) | 130–170 kbps | 48 kHz |
+| 2 | 140 | AAC (`audio/mp4`) | 128 kbps | 44.1 kHz |
+| 3 | 250 | Opus (`audio/webm`) | 70 kbps | 48 kHz |
+| 4 | 249 | Opus (`audio/webm`) | 50 kbps | 48 kHz |
+| 5 | 139 | AAC (`audio/mp4`) | 48 kbps | 44.1 kHz |
 
-LibVLC was chosen because the proof of concept needed the widest real codec/HLS coverage with the
-smallest integration surface. It also provides a native clock and buffering events instead of
-reimplementing an audio pipeline around a decoder. The trade-off is a runtime dependency and a
-larger installed footprint; the fallback keeps the app usable when VLC is absent.
+InnerTubeX's high-quality selector sorts by bitrate, which produces exactly that order for free
+formats. Revibe validates the result instead of trusting the label: premium-only formats (notably
+141) and any itag outside the ladder are rejected, then AUTO/MP4/LOW requests and finally the
+documented progressive client are tried. Premium capabilities, cookies and account entitlements are
+never enabled. The selected itag, MIME, codec, bitrate and sample rate are logged once per new stream;
+the engine logs the decoded sample rate and channels at load. A stream stays cached for the track
+until shortly before its signed URL expires, so quality does not change mid-track.
 
-### What SABR/UMP means here
+Live check of six real tracks: all selected itag 251, `audio/webm` / `opus`, 146–170 kbps, decoded
+48 kHz stereo.
 
-SABR/UMP is a YouTube **transport protocol**, not a media container. LibVLC, GStreamer and FFmpeg do
-not consume a SABR session out of the box; a dedicated transport/segment implementation is required.
-Revibe therefore continues to request progressive MP4/AAC for YouTube and reports
-`UNSUPPORTED_TRANSPORT` when only SABR is available. This is a technical limitation, not a source
-being arbitrarily marked blocked. No DRM, paid-access or credential bypass is implemented.
+JavaCPP extracts the native libraries to `%USERPROFILE%\.javacpp\cache` on first use.
+`FFmpegFrameGrabber.tryLoad()` runs on a preloader thread during engine construction so the first
+Play click does not pay that one-time cost.
 
-## Proof-of-concept results
+## Stream transport
 
-`shared/src/desktopTest/kotlin/com/revibe/playback/VlcPlaybackEngineTest.kt` uses real generated
-media and a real local LibVLC runtime. The fixtures are 4-second tones (plus a 20-second MP3) under
-`shared/src/desktopTest/resources/media`.
+Resolved YouTube Music streams are opened **directly** by FFmpeg. `DesktopTrackStreamResolver`
+registers the signed URL's extraction headers in `DesktopStreamHeaders`; `openGrabber` passes them
+through FFmpeg's `headers` option. Signed URLs remain out of the playback API and UI. This direct
+transport is important for seeking: a loopback re-server produced byte-identical range bodies but
+FFmpeg's HTTP demuxer failed to seek at some boundaries through it.
+
+The resolver caches a signed URL until shortly before expiry, so queue prefetch and the next click
+use the same URL. Stream URLs are re-resolved once if playback reports an error, because signed URLs
+expire.
+
+## Playback lifecycle
+
+1. `load(uri, autoPlay)` is queued with a monotonically increasing token. A newer load invalidates an
+   older one before it can start.
+2. The worker takes a matching prepared player, or opens a new one. Opening reads duration/format,
+   opens the line, pauses it and decodes three PCM frames.
+3. The outgoing line is paused before the new player starts. The old player closes on a separate
+   thread so a slow network read cannot delay the transition.
+4. `play()` starts the line. The queued lead-in is written immediately.
+5. Decode and render threads share the 15-frame queue. Position comes from
+   `SourceDataLine.longFramePosition` converted to media time against a base set by seek.
+6. Pause stops the line and freezes the position. The render loop's PCM write is cancellable, so a
+   pause cannot leave a thread parked inside a stopped line and block resume.
+7. Seek flushes the line, seeks the decoder, validates the first decoded frame, resets the line clock
+   and resumes only after the seek completes.
+8. At EOF the decoder waits for a queue slot before enqueuing a versioned EOF marker, so a full queue
+   at the end cannot strand the renderer. The renderer drains the line, emits `onEnded`, and the
+   controller advances to the prepared next player.
+
+`onProgress` is emitted at most every 100 ms. The line clock freezes while paused and is rebased after
+seek. A separate decoded-sample counter is not used for UI progress.
+
+## Seeking
+
+The original 5.3 s delay had three causes, all confirmed with live FFmpeg debug logs:
+
+1. `setTimestamp(ms, checkFrame = true)` pulls the first frame inside JavaCV. When that internal grab
+   is null, JavaCV returns **without an exception**, so Revibe saw "no frame" and retried every
+   candidate. Each retry reopened the signed URL and could drain megabytes of the open response.
+2. Five candidates could each pay a fresh connection and seek, turning one failed seek into ~20 s.
+3. A landed position was accepted even if it was **after** the requested time, and a forward-skip
+   budget of 45 s could decode tens of seconds just to reach the target.
+
+The fixed path:
+
+- `setTimestamp(ms, checkFrame = false)` only arms FFmpeg's seek; Revibe pulls the first PCM frame
+  itself, so the landing is measured and a null frame becomes a real retry instead of a silent
+  success.
+- The exact target is tried first. If it fails, the same target is retried once on a fresh
+  connection, then only **earlier** 5/10/20 s boundaries are tried. A later candidate can no longer
+  move playback past the requested position.
+- A landing at or just before the target is accepted; a short landing is decoded forward by at most
+  30 s, and the forward-skipped PCM is discarded rather than queued.
+- A landing after the target is rejected and another candidate is tried.
+- A seek to **0 ms** is handled separately: an already-open decoder can flush with no packet, so the
+  decoder is reopened and read from the beginning. A restart never falls back to 10 s.
+- The UI shows the target immediately for responsiveness, then the actual `onSeeked` position. The
+  line clock is reset to the landing, and resume waits until the seek finishes.
+
+Measured live (itag 251, real Windows Java Sound): 10 s seek **1.60 s**, 45 s **1.27 s**, 90 s
+**1.45 s**, backward to 25 s **1.20 s**, 150 s **1.36 s**; all landings were **14 ms** from the
+requested position. Installed UI seeks landed within 14 ms in 0.02–2.9 s, including a backward jump.
+After a prepared-player swap, 45 s landed at 45.014 s in ~1.1 s.
+
+## Prefetch and prepared player
+
+`preload(uri)` opens the stream and decodes the first three PCM frames. The player is paused and has its
+own line reserved. Next promotes that player, writes the lead-in, and closes the outgoing player
+asynchronously. There is no muted second engine and no hidden playback.
+
+Live probe after a preload held for 15 s: next load-to-audio **24 ms**, and a 45 s seek landed at
+45.014 s in ~1.1 s with playback continuing. A cold control also landed within 14 ms.
+
+## Verified matrix
+
+`FfmpegPlaybackEngineTest` uses real generated files with a paced in-memory sink; its live YouTube
+test uses the real Windows Java Sound line. `PreloadDurabilityProbe` uses real signed streams.
 
 | Check | Result |
 | --- | --- |
-| MP4/AAC (`.m4a`) | Playing, duration and advancing position |
-| AAC/ADTS (`.aac`) | Playing, duration and advancing position |
-| MP3 | Playing, duration and advancing position |
-| WAV | Playing, duration and advancing position |
-| FLAC | Playing, duration and advancing position |
-| Ogg/Vorbis | Playing, duration and advancing position |
-| WebM/Opus | Playing, duration and advancing position |
-| Local HLS playlist | Playing; duration reported |
-| Seek forward to 12 s | Position reached the target |
-| Seek backward to 2 s | Position left the forward target |
-| Pause / resume | Position held while paused and advanced after resume |
-| End of track | `finished` event fired and mapped to `onEnded` |
-| Missing file | Engine error surfaced within the timeout |
-| `file:` URI | Normalised to an absolute MRL and played |
-| Live YouTube Music | itag 140, `audio/mp4`, duration 238,370 ms, position advanced past 1 s |
+| MP4/AAC, AAC/ADTS, MP3, WAV, FLAC, Ogg/Vorbis, WebM/Opus | Passing |
+| Forward/backward seek and MP4 seek | Passing |
+| Restart-to-zero seek | Passing (deterministic and live) |
+| Pause/resume position | Passing |
+| End-of-track event | Passing |
+| Near-end seek still completes | Passing |
+| Prefetched next row and seek on a prefetched row | Passing |
+| Rapid switching only starts the final row | Passing |
+| Long load/seek session | Passing |
+| Missing file reports an error | Passing |
+| Live YouTube Music stream with Java Sound | Passing |
+| 45 s seek after a preloaded swap | Passing (~1.1 s, 14 ms accuracy) |
+| Six-track free-format report | Passing (all itag 251, 48 kHz stereo) |
 
-The JavaFX fallback remains verified by `YouTubePlaybackEngineTest` and `PlaybackEngineTest`.
+Current full deterministic result: **197 tests, 0 failures**. The former MusicBrainz/CAA failure is
+now a deterministic MockEngine test; the real public-service check is `MusicBrainzArtworkLiveTest`,
+opt-in with `REVIBE_ARTWORK_LIVE=1`.
 
-The runtime used for the POC is downloaded into the ignored `.tooling/vlc/vlc-3.0.22` directory. It is
-**not** committed. For a distributed build, either install VLC or ship the runtime with the
-application and include its licence/notices.
+## Installed Windows verification
 
-## YouTube Music streams
+An equivalent per-user installer with a unique AppId was installed to a clean directory, launched
+with a fresh `REVIBE_HOME`, and driven through the real Compose window while playing InnerTubeX
+streams:
 
-```
-InnerTubeX extraction (MP4/AAC first, progressive fallback)
-   -> direct signed audio/mp4 URL
-   -> LocalStreamProxy per-stream token (Range + headers)
-   -> LibVLC active player + muted next-track preloader
-```
+- cold search and first play;
+- pause, position hold, resume;
+- seeks across 25%, 46%, 76%, 86% and 95%, plus a backward jump (actual decoder positions within
+  14 ms, 0.02–2.9 s), without restarting the track;
+- next from a prepared player, previous, and five rapid Next clicks, with only the final row audible;
+- artwork and lyrics loaded from the real provider;
+- sustained playback with advancing position and no runtime errors;
+- all checked streams were itag 251 Opus, 48 kHz stereo, with no format/quality change between tracks.
 
-- InnerTubeX extraction still selects MP4/AAC for YouTube. The native engine broadens local formats
-  and is ready for HLS/WebM if the resolver is extended, but YouTube HLS/WebM transport is not yet
-  wired.
-- The loopback proxy keeps signed URLs and headers inside the desktop process and gives each stream
-  its own stable endpoint. Preparing the next row can never replace the source backing the current
-  decoder.
-- The controller warms the next queue row as soon as a queue is loaded (and again after queue edits
-  or native refills). Resolution is deduplicated in-flight, cached until 30 seconds before the signed
-  URL expiry, and shared by prefetch and a click that arrives during it.
-- LibVLC keeps one active player and one muted preloader for the session. The preloader opens and
-  buffers the next URI; Next swaps players and resets the preloaded position. No native player is
-  recreated per track.
-- A playback error re-resolves the current YouTube track once before surfacing failure. This is
-  covered by `ExpiredStreamRecoveryTest`.
-- Anonymous sessions only. Age-restricted content returns `AUTHENTICATION_REQUIRED`.
-
-### Measured transition latency
-
-Real InnerTubeX stream + LibVLC, `PlaybackLatencyProbe` (`REVIBE_LATENCY_PROBE=1`):
-
-| Path | Before | After |
-| --- | ---: | ---: |
-| First Play (cold extraction) | 1,758 ms | provider-bound; ~1.6–2.9 s measured |
-| Warm load of a cached URI | 98 ms | 51–97 ms |
-| Next with resolved cache only | 613 ms | 1–2 ms after preload swap |
-
-The first track still needs InnerTubeX's network extraction. Subsequent loads and Next transitions
-use the same resolved URI, a warm proxy and the preloaded decoder.
-
-## Queue semantics
-
-- `playQueue(tracks, startIndex, contextName)` builds the play order and loads one anchor track.
-- Shuffle preserves the current track first; turning it off restores `sourceQueue`.
-- Repeat OFF / ALL / ONE cycles from the player bar; ONE replays on `onEnded`.
-- `next(auto)` at the end with repeat OFF stops; manual next does nothing when there is no next item.
-- `previous()` seeks to zero when position is over 3 s, otherwise moves back one track.
-- Rapid Next/Previous clicks cancel superseded resolves; only the latest generation may call the
-  engine. A click during a prefetch joins that request instead of cancelling it.
-- `addToQueue`, `playNext`, `removeFromQueue` and `moveInQueue` update both orders.
-- Every load records listening history in SQLite.
-- A missing source URL produces an explicit error, never a simulated progress bar.
-
-## Windows integration
-
-- **Media keys:** JNativeHook global hook maps play/pause, next and previous.
-- **Lifecycle:** engine and media-key hook are released on window close.
-- **Window:** frameless Compose Desktop shell with custom controls and edge-resize handles.
+The installed run also exposed the restart-to-zero fallback: seeking to 0 after a fresh load landed
+at 10 s. That path is fixed (reopen and read the start, never substitute a later position) and is
+covered by `FfmpegPlaybackEngineTest` and the live seek matrix.
 
 ## Not implemented
 
 | Capability | Status | Reason |
 | --- | --- | --- |
-| SABR/UMP transport | Not implemented | Needs a dedicated YouTube transport, not a codec |
-| YouTube HLS/WebM selection | Not wired | Resolver still requests progressive MP4/AAC |
-| Gapless / crossfade | Not implemented | Needs two coordinated decoders |
-| Equalizer / normalization | Not implemented | LibVLC supports filters, but no UI/control integration yet |
-| Audio device selection | Not implemented | LibVLC exposes devices; UI and persistence are future work |
-| SMTC | Not implemented | WinRT/COM projection or sidecar required; media keys work |
-| Token provider | Not wired | Requires a legitimate, documented authentication flow |
-| Bundled VLC installer | Not implemented | Runtime is local tooling only in this phase |
+| SABR/UMP transport | Not implemented | Needs a dedicated YouTube transport |
+| YouTube HLS transport | Not wired | Resolver requests direct audio-only streams |
+| Premium/141 audio | Deliberately excluded | Free-account ladder only; no entitlement bypass |
+| HLS local matrix | Not covered | FFmpeg can demux HLS, but no current test |
+| Gapless / crossfade | Not implemented | Needs coordinated decoders and a shared clock |
+| Equalizer / normalization | Not implemented | No filter graph/UI |
+| User-selectable audio quality | Not implemented | Free-account quality is selected automatically |
+| Audio device selection | Not implemented | Java Sound uses the default Windows device |
+| SMTC | Not implemented | WinRT/COM projection or sidecar; media keys work |
+| Network interruption recovery | Partial | FFmpeg reconnect options and one URL re-resolve; no UI retry test |
 
-## Testing checklist
+## Testing
 
-- [x] Real MP4/AAC, AAC/ADTS, MP3, WAV, FLAC, OGG and WebM/Opus play.
-- [x] Local HLS playlist plays.
-- [x] Seeking forward and backward.
-- [x] Pause/resume holds and resumes position.
-- [x] End-of-track and missing-file error paths.
-- [x] Live YouTube AAC playback through the proxy.
-- [x] Expired-URL re-resolve path is tested with a controlled resolver.
-- [x] JavaFX fallback still compiles and plays.
-- [ ] Long-session memory/CPU profile.
-- [ ] Network interruption mid-stream and recovery in the UI.
-- [ ] Device switching and default-device changes.
-- [ ] Gapless/crossfade/EQ.
+```bash
+./gradlew --no-daemon :shared:desktopTest -PrevibeLiveTests=false
+REVIBE_LATENCY_PROBE=1 ./gradlew --no-daemon :shared:desktopTest \
+  --tests 'com.revibe.playback.FfmpegPlaybackEngineTest' \
+  --tests 'com.revibe.playback.PreloadDurabilityProbe' \
+  --tests 'com.revibe.playback.FreeAudioQualityProbe' \
+  --tests 'com.revibe.playback.LiveSeekMatrixProbe' -PrevibeLiveTests=true
+```

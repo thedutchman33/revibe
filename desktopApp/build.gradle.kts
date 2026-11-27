@@ -18,6 +18,7 @@ kotlin {
         val desktopMain by getting {
             dependencies {
                 implementation(project(":shared"))
+                implementation(libs.jna.platform)
                 implementation(compose.desktop.currentOs)
                 implementation(compose.material3)
                 implementation(compose.materialIconsExtended)

@@ -9,11 +9,11 @@ import kotlin.test.assertTrue
 
 /**
  * Manual, real-network latency probe. It is skipped unless REVIBE_LATENCY_PROBE=1
- * so the deterministic suite never depends on YouTube availability.
+ * so the deterministic suite never depends on YouTube or an audio device.
  *
  * Run with:
  *   REVIBE_LATENCY_PROBE=1 ./gradlew :shared:desktopTest \
- *     --tests 'com.revibe.playback.PlaybackLatencyProbe' -PrevibeLiveTests=true -i
+ *     --tests 'com.revibe.playback.PlaybackLatencyProbe' -PrevibeLiveTests=true --rerun-tasks
  */
 class PlaybackLatencyProbe {
     @Test
@@ -23,9 +23,8 @@ class PlaybackLatencyProbe {
         assertTrue(tracks.size >= 2, "Need two live tracks for the transition probe")
 
         val resolver = DesktopTrackStreamResolver(YouTubeTestHarness.source)
-        val engine = VlcPlaybackEngine().also { it.setVolume(0.01f) }
+        val engine = FfmpegPlaybackEngine().also { it.setVolume(0.01f) }
         try {
-            // Cold play: extractor startup, extraction, proxy and first engine load.
             val coldStart = System.nanoTime()
             val first = resolver.resolve(tracks[0])
             val coldResolvedAt = System.nanoTime()
@@ -33,9 +32,8 @@ class PlaybackLatencyProbe {
             val coldEnd = System.nanoTime()
             report("cold", coldStart, coldResolvedAt, coldEnd, coldAudio)
             engine.stop()
-            Thread.sleep(250)
+            Thread.sleep(300)
 
-            // Warm load of a URI already in the resolver/proxy cache.
             val warmStart = System.nanoTime()
             val warmStream = resolver.resolve(tracks[0])
             val warmResolvedAt = System.nanoTime()
@@ -43,18 +41,16 @@ class PlaybackLatencyProbe {
             val warmEnd = System.nanoTime()
             report("warm", warmStart, warmResolvedAt, warmEnd, warmAudio)
             engine.stop()
-            Thread.sleep(250)
+            Thread.sleep(300)
 
-            // Queue prefetch: this is what runs while the current row plays.
             val prefetchStart = System.nanoTime()
             val next = resolver.prefetch(tracks[1])
             val prefetchEnd = System.nanoTime()
             engine.preload(next!!.uri!!)
             println("[latency] next prefetch=${(prefetchEnd - prefetchStart) / 1_000_000.0}ms")
-            // Give the muted decoder the same head start a listener would.
-            Thread.sleep(500)
+            // Let the prefetch settle as it would while the previous song plays.
+            Thread.sleep(1_500)
 
-            // The actual Next click: resolver cache + player swap only.
             val nextStart = System.nanoTime()
             val nextStream = resolver.resolve(tracks[1])
             val nextResolvedAt = System.nanoTime()
@@ -75,7 +71,7 @@ class PlaybackLatencyProbe {
         )
     }
 
-    private fun VlcPlaybackEngine.loadAndAwaitAudio(url: String): Long {
+    private fun FfmpegPlaybackEngine.loadAndAwaitAudio(url: String): Long {
         val latch = CountDownLatch(1)
         val progress = CountDownLatch(1)
         val audioAt = java.util.concurrent.atomic.AtomicLong(0)
@@ -85,6 +81,7 @@ class PlaybackLatencyProbe {
             override fun onProgress(positionMs: Long) {
                 if (positionMs > 0) progress.countDown()
             }
+
             override fun onPlayingChanged(isPlaying: Boolean) {
                 if (isPlaying && latch.count > 0) {
                     audioAt.set(System.nanoTime())

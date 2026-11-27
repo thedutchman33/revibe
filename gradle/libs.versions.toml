@@ -5,10 +5,9 @@ coroutines = "1.11.0"
 ktor = "3.6.0"
 serialization = "1.12.0"
 innertubex = "v0.13.1"
-vlcj = "4.12.1"
+jna = "5.16.0"
 sqlite = "3.49.1.0"
 jaudiotagger = "3.0.1"
-javafx = "23.0.2"
 jnativehook = "2.2.2"
 slf4j = "2.0.17"
 
@@ -24,13 +23,10 @@ ktor-serialization-json = { module = "io.ktor:ktor-serialization-kotlinx-json", 
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite" }
 jaudiotagger = { module = "net.jthink:jaudiotagger", version.ref = "jaudiotagger" }
-javafx-media = { module = "org.openjfx:javafx-media", version.ref = "javafx" }
-javafx-graphics = { module = "org.openjfx:javafx-graphics", version.ref = "javafx" }
-javafx-base = { module = "org.openjfx:javafx-base", version.ref = "javafx" }
 jnativehook = { module = "com.github.kwhat:jnativehook", version.ref = "jnativehook" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 innertubex = { module = "com.github.MetrolistGroup.innertubex:innertubex", version.ref = "innertubex" }
-vlcj = { module = "uk.co.caprica:vlcj", version.ref = "vlcj" }
+jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

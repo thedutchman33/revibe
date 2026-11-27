@@ -3,12 +3,16 @@ package com.revibe.provider
 import com.revibe.model.MusicSourceId
 import com.revibe.model.Track
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -91,16 +95,77 @@ class ArtworkResolverTest {
     }
 
     @Test
-    fun `musicbrainz and cover art archive return a real cover for a real release`() = runBlocking {
-        val client = HttpClient(CIO) {
-            expectSuccess = false
-            followRedirects = true
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; isLenient = true }) }
-            install(HttpTimeout) { requestTimeoutMillis = 20_000; connectTimeoutMillis = 10_000 }
+    fun `musicbrainz release match returns a high resolution cover art archive image`() = runBlocking {
+        val requests = AtomicInteger()
+        val client = mockClient { request ->
+            requests.incrementAndGet()
+            when {
+                request.url.encodedPath.endsWith("/release") -> respondJson(RELEASE_RESPONSE)
+                request.url.encodedPath.startsWith("/release/") -> respondJson(COVER_RESPONSE)
+                else -> error("unexpected request ${request.url}")
+            }
         }
-        // The public MusicBrainz/CAA services occasionally need more than the
-        // production 8 s budget; this live check is about a real cover, not latency.
-        val provider = MusicBrainzArtworkProvider(client, timeoutMs = 20_000)
+        val provider = MusicBrainzArtworkProvider(client, minIntervalMs = 0)
+        val query = ArtworkQuery(
+            artist = "Daft Punk",
+            album = "Random Access Memories",
+            title = "Get Lucky",
+            durationMs = 369_000,
+        )
+
+        val candidate = provider.artwork(query)
+        assertNotNull(candidate)
+        assertEquals("https://coverartarchive.org/release/release-mbid/front-1200.jpg", candidate.url)
+        assertEquals("Cover Art Archive", candidate.provider)
+        assertEquals("musicbrainz-release-mbid", candidate.matchedBy)
+        assertEquals(2, requests.get())
+
+        // The second lookup is a session-cache hit.
+        assertEquals(candidate.url, provider.artwork(query)?.url)
+        assertEquals(2, requests.get())
+    }
+
+    @Test
+    fun `musicbrainz falls back to a recording match for playlist album names`() = runBlocking {
+        val client = mockClient { request ->
+            when {
+                request.url.encodedPath.endsWith("/release") -> respondJson("""{"releases":[]}""")
+                request.url.encodedPath.endsWith("/recording") -> respondJson(RECORDING_RESPONSE)
+                request.url.encodedPath.startsWith("/release/") -> respondJson(COVER_RESPONSE)
+                else -> error("unexpected request ${request.url}")
+            }
+        }
+        val provider = MusicBrainzArtworkProvider(client, minIntervalMs = 0)
+        val candidate = provider.artwork(
+            ArtworkQuery(
+                artist = "Daft Punk",
+                album = "My Playlist",
+                title = "Get Lucky",
+                durationMs = 369_000,
+            ),
+        )
+        assertNotNull(candidate)
+        assertEquals("musicbrainz-release-mbid", candidate.matchedBy)
+        assertTrue(candidate.url.startsWith("https://coverartarchive.org/"))
+    }
+
+    @Test
+    fun `musicbrainz retries once when the public service is busy`() = runBlocking {
+        val releaseCalls = AtomicInteger()
+        val client = mockClient { request ->
+            when {
+                request.url.encodedPath.endsWith("/release") -> {
+                    if (releaseCalls.incrementAndGet() == 1) {
+                        respond("""{"error":"busy"}""", HttpStatusCode.ServiceUnavailable)
+                    } else {
+                        respondJson(RELEASE_RESPONSE)
+                    }
+                }
+                request.url.encodedPath.startsWith("/release/") -> respondJson(COVER_RESPONSE)
+                else -> error("unexpected request ${request.url}")
+            }
+        }
+        val provider = MusicBrainzArtworkProvider(client, minIntervalMs = 0)
         val candidate = provider.artwork(
             ArtworkQuery(
                 artist = "Daft Punk",
@@ -109,21 +174,62 @@ class ArtworkResolverTest {
                 durationMs = 369_000,
             ),
         )
-        println("[artwork] ${candidate?.url} via ${candidate?.provider} (${candidate?.matchedBy})")
-        assertNotNull(candidate, "MusicBrainz/CAA returned no cover for a real release")
-        assertTrue(candidate.url.startsWith("https://"))
-        assertTrue(candidate.url.contains("coverartarchive.org"))
-        assertEquals("Cover Art Archive", candidate.provider)
+        assertNotNull(candidate)
+        assertEquals(2, releaseCalls.get())
+    }
 
-        // A second lookup must hit the session cache, not the network.
-        val again = provider.artwork(
-            ArtworkQuery(
-                artist = "Daft Punk",
-                album = "Random Access Memories",
-                title = "Get Lucky",
-                durationMs = 369_000,
+    @Test
+    fun `musicbrainz returns null when cover art archive has no front image`() = runBlocking {
+        val client = mockClient { request ->
+            when {
+                request.url.encodedPath.endsWith("/release") -> respondJson(RELEASE_RESPONSE)
+                request.url.encodedPath.startsWith("/release/") -> respondJson("""{"images":[]}""")
+                else -> error("unexpected request ${request.url}")
+            }
+        }
+        val provider = MusicBrainzArtworkProvider(client, minIntervalMs = 0)
+        assertNull(
+            provider.artwork(
+                ArtworkQuery(
+                    artist = "Daft Punk",
+                    album = "Random Access Memories",
+                    title = "Get Lucky",
+                    durationMs = 369_000,
+                ),
             ),
         )
-        assertEquals(candidate.url, again?.url)
+    }
+
+    private fun mockClient(
+        handler: suspend io.ktor.client.engine.mock.MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> io.ktor.client.request.HttpResponseData,
+    ): HttpClient = HttpClient(MockEngine(handler)) {
+        expectSuccess = false
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; isLenient = true }) }
+    }
+
+    private fun io.ktor.client.engine.mock.MockRequestHandleScope.respondJson(
+        body: String,
+        status: HttpStatusCode = HttpStatusCode.OK,
+    ) = respond(
+        content = body,
+        status = status,
+        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+    )
+
+    private companion object {
+        const val RELEASE_RESPONSE = """
+            {"releases":[{"id":"release-mbid","title":"Random Access Memories","score":100,
+            "artist-credit":[{"name":"Daft Punk"}]}]}
+        """
+        const val RECORDING_RESPONSE = """
+            {"recordings":[{"id":"recording-mbid","title":"Get Lucky","score":100,
+            "artist-credit":[{"name":"Daft Punk"}],
+            "releases":[{"id":"release-mbid","title":"Random Access Memories"}]}]}
+        """
+        const val COVER_RESPONSE = """
+            {"images":[{"front":true,"approved":true,
+            "image":"http://coverartarchive.org/release/release-mbid/front.jpg",
+            "thumbnails":{"1200":"https://coverartarchive.org/release/release-mbid/front-1200.jpg"}}]}
+        """
     }
 }

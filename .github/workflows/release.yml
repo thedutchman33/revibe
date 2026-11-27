@@ -221,20 +221,6 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Install VLC for the native playback tests
-        shell: pwsh
-        run: |
-          choco install vlc --version=3.0.21 --no-progress -y
-          if ($LASTEXITCODE -ne 0) { throw "VLC installation failed." }
-          $vlc = @(
-            (Join-Path $env:ProgramFiles "VideoLAN\VLC"),
-            (Join-Path ${env:ProgramFiles(x86)} "VideoLAN\VLC")
-          ) | Where-Object { Test-Path -LiteralPath (Join-Path $_ "libvlc.dll") } |
-            Select-Object -First 1
-          if (-not $vlc) { throw "VLC runtime was not found after installation." }
-          "REVIBE_VLC_HOME=$vlc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "VLC=$vlc" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-
       - name: Run desktop tests
         shell: pwsh
         env:
@@ -288,6 +274,9 @@ jobs:
         shell: pwsh
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          # Publishable (anon/publishable) values only; never a service-role key.
+          REVIBE_SUPABASE_URL: ${{ secrets.REVIBE_SUPABASE_URL }}
+          REVIBE_SUPABASE_ANON_KEY: ${{ secrets.REVIBE_SUPABASE_ANON_KEY }}
         run: |
           $manifest = "https://github.com/${{ github.repository }}/releases/latest/download/update-manifest.json"
           & .\tools\build-windows-installer.ps1 `
@@ -450,7 +439,6 @@ jobs:
           "BASELINE_DIR=$baselineDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "UPGRADE_DATA=$data" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "REVIBE_HOME=$data" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "REVIBE_PLAYBACK_ENGINE=javafx" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run production updater handoff against the real Inno EXE
         shell: pwsh

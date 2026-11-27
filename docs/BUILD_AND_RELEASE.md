@@ -5,10 +5,10 @@
 - Windows 10/11 (this milestone).
 - JDK 21 or newer; verified with JDK 23. `jvmTarget` is 21.
 - Network access for Gradle dependencies and catalog search.
-- **VLC 3.0.x runtime** for the native engine and the native-format tests. The app still builds and
-  runs without it, falling back to JavaFX. The development runtime used here is in the ignored
-  `.tooling/vlc/vlc-3.0.22` directory; it is not committed. No FFmpeg or GStreamer install is needed.
-  Set `REVIBE_VLC_HOME` to the VLC directory containing `libvlc.dll` and `plugins/`.
+- **No external media runtime.** FFmpeg 8.1.2 and JavaCPP Windows x64 natives are resolved from
+  Maven Central and bundled in the app. No VLC, GStreamer, JavaFX or `ffmpeg.exe` install is needed.
+  JavaCPP extracts the native DLLs to `%USERPROFILE%\.javacpp\cache` on first use. `jna-platform` is
+  still used for DPAPI and the Windows AppUserModelID.
 - **Inno Setup 6** for the standalone per-user `.exe` installer. It is a build-time dependency only
   and is not shipped. It is the release/update format. The legacy Compose `packageMsi`/`packageExe`
   tasks remain available for local experiments but are not published by the release workflow.
@@ -23,21 +23,23 @@ is scoped to the `innertubex`/`quackjs` groups in `settings.gradle.kts`.
 # Compile
 ./gradlew :desktopApp:compileKotlinDesktop
 
-# Run on LibVLC if available; JavaFX otherwise
+# Run
 ./gradlew :desktopApp:run
 
-# Force the fallback
-REVIBE_PLAYBACK_ENGINE=javafx ./gradlew :desktopApp:run
-
-# All desktop tests
+# All desktop tests (live checks opt out with -PrevibeLiveTests=false)
 ./gradlew :shared:desktopTest
+./gradlew :shared:desktopTest -PrevibeLiveTests=false
 
 # Specific suites
 ./gradlew :shared:desktopTest --tests "com.revibe.CatalogSmokeTest"
-./gradlew :shared:desktopTest --tests "com.revibe.PlaybackEngineTest"
+./gradlew :shared:desktopTest --tests "com.revibe.playback.FfmpegPlaybackEngineTest"
 ./gradlew :shared:desktopTest --tests "com.revibe.LocalLibraryTest"
-./gradlew :shared:desktopTest --tests "com.revibe.playback.VlcPlaybackEngineTest"
 ./gradlew :shared:desktopTest --tests "com.revibe.youtube.*"
+
+# Live prefetch/seek probe (real YouTube Music + real Java Sound)
+REVIBE_LATENCY_PROBE=1 ./gradlew :shared:desktopTest \
+  --tests "com.revibe.playback.PreloadDurabilityProbe" \
+  -PrevibeLiveTests=true --rerun-tasks
 
 # Debug packages (not the release path)
 ./gradlew :desktopApp:packageMsi
@@ -86,28 +88,26 @@ address; the app still identifies itself by repository URL when it is unset.
 
 ## Build facts and constraints
 
-- JavaFX is declared with a platform classifier (`win`, `mac`, `mac-aarch64`, `linux`,
-  `linux-aarch64`) computed from the host OS/arch. Without the classifier the artifact has no classes.
-- The bundled runtime must include `jdk.httpserver`; `LocalStreamProxy` uses
-  `com.sun.net.httpserver.HttpServer`. Without it the packaged launcher exits before creating a
-  window even though the development build works against the full JDK.
-- LibVLC is loaded from an explicit VLC home. `VlcNativeLocator` searches `REVIBE_VLC_HOME`,
-  `VLC_HOME`, the project `.tooling` runtime and standard OS install locations. VLC 3 removed the
-  `--plugin-path` CLI option, so the engine sets `VLC_PLUGIN_PATH` through JNA before creating the
-  factory.
-- JavaFX prints "Unsupported JavaFX configuration: classes were loaded from unnamed module" when used
-  as the fallback from the classpath. It is a warning; playback and tests work. A jlink/module-path
-  setup would remove it and shrink the runtime.
-- Native tests require a matching 64-bit VLC runtime. They fail with a clear message if it is absent;
-  the fallback JavaFX test does not need VLC.
+- The app image bundles `ffmpeg-8.1.2-1.5.14-windows-x86_64.jar`,
+  `javacpp-1.5.14-windows-x86_64.jar`, their Java classes and the `jniav*`/`jnijavacpp` JNI DLLs.
+  `FfmpegPlaybackEngine` uses JavaCV only; there is no vlcj, LibVLC or JavaFX dependency.
+- The bundled runtime must include `jdk.httpserver` for the Supabase OAuth loopback callback
+  (`DesktopOAuthLauncher` uses `com.sun.net.httpserver.HttpServer`). Playback itself opens the signed
+  stream directly in FFmpeg and does not run a local HTTP server. `java.sql`, `java.naming` and
+  `jdk.unsupported` are also required.
+- `jna-platform` is kept for DPAPI (`Crypt32Util`) and the Windows AppUserModelID/taskbar identity.
+  It is not a VLC dependency.
+- The first FFmpeg load extracts/probes native libraries through JavaCPP and can take a couple of
+  seconds in a fresh JVM. The engine warms that path on a preloader thread at startup. Subsequent
+  loads use cached natives and are much faster.
+- Deterministic FFmpeg tests use an injected paced `AudioSink`, so they need no audio device. The live
+  YouTube test and the durability probe use the real Windows Java Sound line and real signed streams.
+- Live YouTube tests depend on InnerTube's current web response and the network. They fail with the
+  actual status/reason rather than being skipped silently. They are excluded from CI with
+  `-PrevibeLiveTests=false` because GitHub datacenter IPs currently receive SABR-only responses.
 - The Android SDK is present on the development machine but no `androidTarget()` exists yet, so the
   build never configures Android plugins.
 - `compose.desktop.currentOs` pulls the Skiko native runtime for the host only.
-- Tests share one JavaFX toolkit. Do **not** call `Platform.exit()` inside a test class: it kills the
-  engine for later classes. The test worker exits after the suite; the app releases the engine on
-  window close.
-- Live YouTube tests depend on InnerTube's current web response and the network. They fail with the
-  actual status/reason rather than being skipped silently.
 - The in-app window capture helper is development-only (`tools/*.ps1`) and is not packaged.
 
 ## Verification performed
@@ -121,19 +121,24 @@ address; the app still identifies itself by repository URL when it is unset.
 | Native queue order + continuation | Passed (unit and live) |
 | Local library test (scan, skip unchanged, remove missing) | Passed |
 | YouTube search / mapping / resolution / compatibility / queue / lyrics | Passed (live network) |
-| YouTube playback through JavaFX + proxy | Passed (fallback path) |
-| LibVLC real-media matrix (M4A/AAC/MP3/WAV/FLAC/OGG/WebM/HLS) | Passed |
-| LibVLC seek/pause/end/error/live YouTube | Passed (`VlcPlaybackEngineTest`, 9 checks) |
+| FFmpeg format matrix (M4A/AAC, AAC/ADTS, MP3, WAV, FLAC, OGG, WebM/Opus) | Passed (`FfmpegPlaybackEngineTest`) |
+| FFmpeg seek/pause/end/error/prefetch/restart/rapid switching/long session | Passed (13 deterministic checks) |
+| Live YouTube AAC playback, seek and preload durability | Passed (`FfmpegPlaybackEngineTest`, `PreloadDurabilityProbe`) |
 | YouTube playlist search/details and SQLite import | Passed |
 | Expired signed-URL recovery | Passed (`ExpiredStreamRecoveryTest`) |
-| `:shared:desktopTest -PrevibeLiveTests=false` | 181 deterministic tests, 0 failures (44 suites) |
+| `:shared:desktopTest -PrevibeLiveTests=false` | 197 tests, 0 failures; artwork uses deterministic fixtures, live MusicBrainz is opt-in |
 | Live YouTube transport checks | Opt-in with `-PrevibeLiveTests=true`; GitHub datacenter IPs currently receive SABR-only responses |
 | Automatic update logic | Passed (unit tests; see `docs/AUTOMATIC_UPDATES.md`) |
 | Real Inno EXE upgrade/relaunch | Passed by the release workflow's previous-release upgrade job |
 | Unsigned EXE SHA-256 update path | Passed; Authenticode remains optional until a certificate exists |
-| App launch on LibVLC + in-app YouTube playback | Verified via window capture |
+| Installed-app playback through the real UI | Passed; play, pause/resume, forward/backward seeks within 14 ms, next/previous, rapid switching, restart-to-zero, artwork/lyrics and sustained playback on itag 251 Opus 48 kHz streams |
+| App launch with bundled FFmpeg | Passed; installed test build loaded `avcodec-62`, `avformat-62`, `avutil-60` and `swresample-6` |
 | Playlist tab/import visual capture | Not captured; source and SQLite paths tested |
-| Standalone per-user EXE | Built from the app image with Inno Setup 6 |
+| Standalone per-user EXE | `Revibe-1.0.0-Setup.exe`, 148,282,573 bytes, SHA-256 `52f49a1779a2d91a7fecd935936e5ffe311fd4f97554d032dc7c8b05c02e44bf` |
+| Release 1.0.0 version metadata | Installer file/product version, installed `Revibe.exe` and in-app About all report 1.0.0 |
+| Release 1.0.0 clean install | Passed in an isolated directory with a unique AppId; existing 0.11.1 install and data untouched, no stderr |
+| Release 1.0.0 icon QA | Google mark and Spotify import glyph upright in normal and hover states at 1440×900 logical |
+| Clean test install | Passed from an equivalent test installer with a unique AppId; fresh DB, window titled `Revibe`, no stderr |
 | Install without admin | Passed; installs to `%LOCALAPPDATA%\Programs\Revibe` by default |
 | Start Menu + desktop shortcuts | Passed; both created and removed on uninstall |
 | Launch without Java/JDK/Gradle | Passed with PATH reduced to `C:\Windows\System32;C:\Windows` |
@@ -151,9 +156,9 @@ address; the app still identifies itself by repository URL when it is unset.
       preservation (see `docs/AUTOMATIC_UPDATES.md`).
 - [ ] Add Authenticode signing and a stable application icon. The pipeline currently opts in to the
       unsigned SHA-256-only EXE path; a publisher pin upgrades this to signature verification.
-- [ ] Ship the full GPL-3.0 text, InnerTubeX/QuackJS/vlcj notices and corresponding source offer.
-- [ ] Install or bundle a compatible LibVLC 3.0.x runtime and include VLC's notices/source offer.
-- [ ] Review third-party notices (JavaFX classpath exception, LGPL jaudiotagger/JNativeHook/JNA).
+- [ ] Ship the full GPL-3.0 text, InnerTubeX/QuackJS notices and corresponding source offer.
+- [ ] Include the Apache-2.0 JavaCV/JavaCPP notices and the LGPL-2.1+ FFmpeg notice/source offer.
+- [ ] Review third-party notices (LGPL jaudiotagger/JNativeHook, Apache-2.0 JNA).
 - [ ] Add a privacy note (search terms go to YouTube Music; track/artist names go to
       LRCLIB/Wikipedia; no telemetry).
 - [ ] Confirm YouTube Music and LRCLIB/Wikipedia usage terms for the intended distribution model.

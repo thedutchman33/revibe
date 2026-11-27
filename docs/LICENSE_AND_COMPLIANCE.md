@@ -24,10 +24,10 @@ licence.
 | --- | --- | --- |
 | InnerTubeX v0.13.1 | GPL-3.0 | Linked library, resolved from JitPack, unmodified |
 | QuackJS 0.1.4 | GPL-3.0 | Transitive hosted player-cipher backend; no JNI or browser engine |
-| vlcj 4.12.1 | GPL-3.0 | Java binding linked into the desktop app; unmodified |
-| LibVLC (VLC 3.0.22 during verification) | LGPL-2.1+; VLC application/plugins GPL-2.0+ | Native runtime loaded through vlcj; not bundled in this repository |
-| JNA (transitive) | Apache-2.0 / LGPL-2.1 | Native binding used by vlcj |
-| JavaFX Media/Graphics/Base | GPL-2.0 **with Classpath Exception** | Fallback engine; linked; the exception permits use in the GPL-3.0 app |
+| JavaCV 1.5.14 | Apache-2.0 (also GPL-2.0+ / GPLv2 + Classpath Exception) | FFmpeg decode wrapper; unmodified |
+| JavaCPP 1.5.14 | Apache-2.0 (also GPL-2.0+ / GPLv2 + Classpath Exception) | Native-library loader; unmodified |
+| FFmpeg 8.1.2 native libraries | LGPL-2.1-or-later (default Bytedeco build, not `-gpl`) | Bundled Windows x64 demux/decode/resample DLLs; dynamically loaded |
+| JNA / jna-platform | Apache-2.0 / LGPL-2.1 | DPAPI and Windows AppUserModelID helpers |
 | jaudiotagger 3.0.1 | LGPL-3.0 | Unmodified local-tag reader; notice + relink ability |
 | JNativeHook 2.2.2 | LGPL-3.0 | Unmodified global media-key hook; notice + relink ability |
 | SQLite JDBC (Xerial) | Apache-2.0 | Notice |
@@ -36,10 +36,10 @@ licence.
 | SLF4J Simple | MIT | Notice |
 
 A packaged build must ship the GPL-3.0 text, the licences above and an offer of corresponding source.
-The JavaFX Classpath Exception remains important, but it no longer changes the overall licence because
-InnerTubeX and vlcj themselves are GPL-3.0. If VLC is installed rather than bundled, the installer
-should state that dependency; if it is bundled, include VLC's `COPYING`, `AUTHORS` and source offer
-for the exact build.
+JavaCV and JavaCPP are used under Apache-2.0; they do not change the overall GPL-3.0 licence, which
+comes from InnerTubeX and QuackJS. The bundled FFmpeg build is LGPL-2.1-or-later, so include its
+licence/notice, identify the exact Bytedeco FFmpeg version/build, and provide the corresponding
+source offer. No VLC runtime is bundled or required.
 
 ## Reference projects
 
@@ -51,11 +51,12 @@ for the exact build.
 | BitChord | GPL-3.0 | UX/architecture study only |
 | VIVI Music | GPL-3.0 | Integration study only |
 | metroserver / VIVI-SERVER | GPL-3.0 (as published) | Not used |
-| VideoLAN VLC / libVLC | GPL-2.0+ / LGPL-2.1+ | Native runtime dependency; unmodified |
+| VideoLAN VLC / libVLC | GPL-2.0+ / LGPL-2.1+ | Not used after the FFmpeg migration |
 
 Architectural patterns and public API usage are not copyrightable expression. No Metrolist source was
 copied into Revibe; the Android player implementation was studied, then the Windows path was designed
-around a native engine boundary and a loopback proxy.
+around a native engine boundary, with signed streams opened directly by FFmpeg using the
+resolver's request headers.
 
 ## Spotify visual reference
 
@@ -63,9 +64,9 @@ Spotify's Circular typeface, icon set and logo are proprietary and are not inclu
 matches Spotify's public layout metrics (heights, spacing, type sizes and opacity) but ships Inter
 under the SIL OFL 1.1 (`licenses/Inter-OFL.txt`) and Material Icons as open substitutes.
 
-VLC is not bundled in this repository. A packaged build must either require a user-installed VLC or
-ship a compatible runtime, and must include the corresponding notices and source-offer terms. Verify
-the current InnerTubeX, vlcj and VLC licence texts before distribution.
+The installer bundles the FFmpeg/JavaCPP native jars. Verify the current InnerTubeX, JavaCV/JavaCPP
+and FFmpeg licence texts and the Bytedeco FFmpeg build's corresponding-source offer before
+distribution.
 
 ## Service terms
 
@@ -86,10 +87,10 @@ or commercialising Revibe.** Revibe is not affiliated with or endorsed by YouTub
 
 ### Native playback and SABR
 
-LibVLC is a general media engine. It does not implement YouTube's SABR/UMP session transport, and
+FFmpeg is a general media engine. It does not implement YouTube's SABR/UMP session transport, and
 Revibe does not bypass DRM, paid access or authentication to manufacture one. YouTube extraction
 continues to request progressive MP4/AAC and reports unsupported transport honestly. Local
-FLAC/OGG/Opus/HLS support is independent of YouTube authentication.
+FLAC/OGG/Opus support is independent of YouTube authentication.
 
 ### Token provider
 

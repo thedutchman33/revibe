@@ -9,6 +9,21 @@ val revibePublisher = providers.gradleProperty("revibePublisher").orElse("").get
 val revibeAllowUnsignedUpdates = providers.gradleProperty("revibeAllowUnsignedUpdates")
     .orElse("false")
     .get()
+// Publishable cloud credentials are baked into packaged builds. The release
+// workflow passes them from repository secrets; env wins for local builds.
+val revibeSupabaseUrl = providers.gradleProperty("revibeSupabaseUrl")
+    .orElse(providers.environmentVariable("REVIBE_SUPABASE_URL"))
+    .orElse("")
+    .get()
+val revibeSupabaseAnonKey = providers.gradleProperty("revibeSupabaseAnonKey")
+    .orElse(providers.environmentVariable("REVIBE_SUPABASE_ANON_KEY"))
+    .orElse("")
+    .get()
+val javacvVersion = "1.5.14"
+val javacppVersion = "1.5.14"
+val ffmpegVersion = "8.1.2-$javacppVersion"
+// Revibe ships a Windows x64 installer; native FFmpeg/JNI jars match that target.
+val javacppPlatform = providers.gradleProperty("revibeJavacppPlatform").orElse("windows-x86_64").get()
 val revibeLiveTests = providers.gradleProperty("revibeLiveTests")
     .orElse("true")
     .map(String::toBoolean)
@@ -19,6 +34,8 @@ val generateRevibeBuildInfo = tasks.register("generateRevibeBuildInfo") {
     inputs.property("manifestUrl", revibeUpdateManifestUrl)
     inputs.property("publisher", revibePublisher)
     inputs.property("allowUnsignedUpdates", revibeAllowUnsignedUpdates)
+    inputs.property("supabaseUrl", revibeSupabaseUrl)
+    inputs.property("supabaseAnonKey", revibeSupabaseAnonKey)
     outputs.dir(buildInfoDir)
     doLast {
         fun kotlinString(value: String) = value.replace("\\", "\\\\").replace("\"", "\\\"")
@@ -34,20 +51,11 @@ val generateRevibeBuildInfo = tasks.register("generateRevibeBuildInfo") {
                 const val updateManifestUrl: String = "${kotlinString(revibeUpdateManifestUrl)}"
                 const val publisher: String = "${kotlinString(revibePublisher)}"
                 const val allowUnsignedUpdates: Boolean = ${revibeAllowUnsignedUpdates.toBoolean()}
+                const val supabaseUrl: String = "${kotlinString(revibeSupabaseUrl)}"
+                const val supabaseAnonKey: String = "${kotlinString(revibeSupabaseAnonKey)}"
             }
             """.trimIndent(),
         )
-    }
-}
-
-// JavaFX publishes its classes and native libraries per platform classifier.
-val javafxClassifier = run {
-    val os = System.getProperty("os.name").lowercase()
-    val arch = System.getProperty("os.arch").lowercase()
-    when {
-        os.contains("win") -> "win"
-        os.contains("mac") -> if (arch.contains("aarch64")) "mac-aarch64" else "mac"
-        else -> if (arch.contains("aarch64")) "linux-aarch64" else "linux"
     }
 }
 
@@ -111,13 +119,16 @@ kotlin {
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.sqlite.jdbc)
                 implementation(libs.jaudiotagger)
-                implementation("org.openjfx:javafx-base:${libs.versions.javafx.get()}:$javafxClassifier")
-                implementation("org.openjfx:javafx-graphics:${libs.versions.javafx.get()}:$javafxClassifier")
-                implementation("org.openjfx:javafx-media:${libs.versions.javafx.get()}:$javafxClassifier")
                 implementation(libs.jnativehook)
                 implementation(libs.slf4j.simple)
-                // GPL-3.0. Native LibVLC/JVM engine; JavaFX remains the fallback.
-                implementation(libs.vlcj)
+                // DPAPI session storage and Windows taskbar identity.
+                implementation(libs.jna.platform)
+                // FFmpeg decoding inside the JVM (Metrolist's desktop stack).
+                implementation("org.bytedeco:javacv:$javacvVersion") { isTransitive = false }
+                implementation("org.bytedeco:javacpp:$javacppVersion")
+                implementation("org.bytedeco:javacpp:$javacppVersion:$javacppPlatform")
+                implementation("org.bytedeco:ffmpeg:$ffmpegVersion")
+                implementation("org.bytedeco:ffmpeg:$ffmpegVersion:$javacppPlatform")
             }
         }
     }
@@ -135,9 +146,8 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     if (!revibeLiveTests) {
         filter {
             excludeTestsMatching("com.revibe.youtube.InnerTubeXIntegrationTest")
-            excludeTestsMatching("com.revibe.youtube.YouTubePlaybackEngineTest")
             excludeTestsMatching("com.revibe.youtube.YouTubePlaybackResolutionTest")
-            excludeTestsMatching("*VlcPlaybackEngineTest.LibVLC*")
+            excludeTestsMatching("*FfmpegPlaybackEngineTest.YouTube*")
         }
     }
 }

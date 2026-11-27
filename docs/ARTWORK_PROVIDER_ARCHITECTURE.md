@@ -90,13 +90,20 @@ thumbnail's letterboxing cannot skew the theme. Greyscale artwork falls back to 
 - `DeezerArtworkProviderTest`: correct 1000 px cover, wrong-artist rejection, no request for unknown
   metadata.
 - `ArtworkResolverTest`: catalogue artwork wins without provider calls, fallback order stops at the
-  first cover, unknown metadata is rejected, live MusicBrainz/CAA lookup and cache hit.
+  first cover, unknown metadata is rejected, and the MusicBrainz provider is covered with
+  deterministic MockEngine fixtures: release match, recording fallback, 503 retry, high-resolution
+  CAA URL promotion, empty CAA response and session-cache hit. No test in the deterministic suite
+  calls the public services.
+- `MusicBrainzArtworkLiveTest`: opt-in (`REVIBE_ARTWORK_LIVE=1`) real MusicBrainz/CAA lookup with
+  bounded retries, kept separate because the public service returns HTTP 503 when busy.
 
 ## Live verification
 
 - YouTube Music catalog artwork and high-resolution promotion: verified in the running app.
-- MusicBrainz + Cover Art Archive: the live test returned a real 1200 px cover and a cached second
-  lookup; one 503 was observed and is retried once after the rate-limit interval.
+- MusicBrainz + Cover Art Archive: a live run previously returned a real 1200 px cover; during
+  this verification the public endpoint answered HTTP 503 "server is currently busy" for this
+  network, so the live check remains opt-in and no pass is claimed here. The provider's request,
+  matching, retry and cache behavior are exercised deterministically.
 - Deezer: the anonymous search endpoint returned `{"data":[],"total":87}` from this network, so a
   live cover could not be verified here. The provider is unit-tested and fails closed to the next
   fallback or the gradient placeholder; it does not invent a cover.

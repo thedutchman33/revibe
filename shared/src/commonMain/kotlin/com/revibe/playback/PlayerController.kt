@@ -5,6 +5,7 @@ import com.revibe.model.Track
 import com.revibe.recommendation.AutoplayService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,6 +55,8 @@ class PlayerController(
     private var loadJob: Job? = null
     private var prefetchJob: Job? = null
     private var prefetchedEntryId: String? = null
+    private var prefetchRetryEntryId: String? = null
+    private var prefetchRetries = 0
     private var lastRefillEntryId: String? = null
     private var awaitingEndRefill = false
     private var nativeContinuation: String? = null
@@ -125,11 +128,13 @@ class PlayerController(
 
     fun previous() {
         val state = _state.value
-        recordSkipIfNeeded(state, state.index)
+        // More than three seconds in means "restart this song", not "skip".
+        // It must not be recorded as a skip in the library either.
         if (state.positionMs > 3_000) {
             seekTo(0)
             return
         }
+        recordSkipIfNeeded(state, state.index)
         if (state.index > 0) {
             _state.update { it.copy(index = it.index - 1, positionMs = 0) }
             loadCurrent(autoPlay = true)
@@ -541,8 +546,11 @@ class PlayerController(
                 return@launch
             }
             engine.load(uri, autoPlay)
+            // Warm the next row only after this one has been handed to the
+            // engine. Otherwise the warm-up can occupy the spare player first
+            // and the current track falls back to a cold open.
+            prefetchNext(protectedEntryId = entry.entryId)
         }
-        prefetchNext(protectedEntryId = entry.entryId)
         maybeRefill()
     }
 
@@ -569,14 +577,35 @@ class PlayerController(
         // arriving during prefetch joins that same in-flight request.
         if (prefetchedEntryId != protectedEntryId) prefetchJob?.cancel()
         prefetchedEntryId = next.entryId
+        if (prefetchRetryEntryId != next.entryId) {
+            prefetchRetryEntryId = next.entryId
+            prefetchRetries = 0
+        }
         val generation = contextGeneration
         val nextEntryId = next.entryId
         prefetchJob = scope.launch {
             val result = runCatching { streamResolver.prefetch(next.track) }
             if (generation != contextGeneration) return@launch
             if (_state.value.entries.getOrNull(_state.value.index + 1)?.entryId != nextEntryId) return@launch
-            result.getOrNull()?.uri?.takeIf { it.isNotBlank() }?.let(engine::preload)
-            if (result.isFailure) prefetchedEntryId = null
+            val uri = result.getOrNull()?.uri?.takeIf { it.isNotBlank() }
+            if (uri == null) {
+                // A transient extraction failure must not poison the row for the
+                // rest of the song; retry while the current track still plays.
+                if (prefetchedEntryId == nextEntryId) prefetchedEntryId = null
+                if (prefetchRetries < 2) {
+                    prefetchRetries++
+                    scope.launch {
+                        delay(1_500)
+                        if (generation != contextGeneration) return@launch
+                        if (_state.value.entries.getOrNull(_state.value.index + 1)?.entryId != nextEntryId) {
+                            return@launch
+                        }
+                        prefetchNext(force = true)
+                    }
+                }
+                return@launch
+            }
+            engine.preload(uri)
         }
     }
 

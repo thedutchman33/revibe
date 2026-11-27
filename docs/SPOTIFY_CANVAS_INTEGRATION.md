@@ -17,7 +17,7 @@ Fallback: **high-resolution album artwork** (active) and **artwork-derived accen
 
 The Now Playing surface is a Compose desktop application. Playing a looping MP4/HLS clip inside the
 artwork slot would require a new video surface and decoder path, lifecycle management for hidden
-windows, and a cache for clips. The existing LibVLC engine is an audio playback engine and is not
+windows, and a cache for clips. The existing FFmpeg playback engine is an audio engine and is not
 mounted into Compose. Adding this would change the player surface, which is outside the current
 request to preserve the existing UI and playback behaviour.
 

@@ -32,7 +32,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudOff
-import androidx.compose.material.icons.rounded.FileUpload
+import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Logout
@@ -281,7 +281,7 @@ private fun ImportSection(vm: AppViewModel) {
             Text("Import your music", style = RevibeType.heading.copy(fontSize = 20.sp), color = RevibeColors.TextPrimary)
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                RevibeButton("Import from Spotify", vm::beginSpotifyImport, icon = Icons.Rounded.FileUpload)
+                RevibeButton("Import from Spotify", vm::beginSpotifyImport, icon = Icons.Rounded.FileDownload)
                 RevibeButton("Import a playlist file", vm::beginPlaylistImport, kind = ButtonKind.Outline)
             }
         }
@@ -597,10 +597,10 @@ private fun GoogleMark(size: Dp) {
                 style = Stroke(width = stroke, cap = StrokeCap.Butt),
             )
         }
-        arc(Color(0xFFEA4335), 195f, 105f)   // red, top
-        arc(Color(0xFF4285F4), 300f, 60f)    // blue, upper right
-        arc(Color(0xFF34A853), 25f, 100f)    // green, bottom right
-        arc(Color(0xFFFBBC05), 125f, 70f)    // yellow, left
+        arc(Color(0xFFEA4335), 206f, 106f)  // red, top
+        arc(Color(0xFF4285F4), 0f, 49f)     // blue, below the crossbar
+        arc(Color(0xFF34A853), 49f, 111f)   // green, bottom right to bottom left
+        arc(Color(0xFFFBBC05), 160f, 46f)   // yellow, left
         drawRect(
             color = Color(0xFF4285F4),
             topLeft = Offset(center.x, center.y - stroke / 2f),

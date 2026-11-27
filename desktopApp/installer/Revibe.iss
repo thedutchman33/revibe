@@ -2,10 +2,20 @@
 ; Build the app image first:
 ;   ./gradlew :desktopApp:createDistributable
 ; Then compile with:
-;   ISCC.exe /DAppVersion=0.10.0 Revibe.iss
+;   ISCC.exe /DAppVersion=1.0.0 Revibe.iss
 
 #ifndef AppVersion
-  #define AppVersion "0.10.0"
+  #define AppVersion "1.0.0"
+#endif
+
+; Overridable so a clean verification install can use its own AppId and
+; directory without touching an existing Revibe installation.
+#ifndef AppId
+  #define AppId "{{96ABEE54-A741-4118-B1CD-23080DB60D33}"
+#endif
+
+#ifndef DefaultDirName
+  #define DefaultDirName "{localappdata}\Programs\Revibe"
 #endif
 
 #ifndef SourceDir
@@ -21,7 +31,7 @@
 #endif
 
 [Setup]
-AppId={{96ABEE54-A741-4118-B1CD-23080DB60D33}
+AppId={#AppId}
 AppName=Revibe
 AppVersion={#AppVersion}
 AppVerName=Revibe {#AppVersion}
@@ -29,7 +39,7 @@ AppPublisher=Revibe
 AppPublisherURL=https://github.com/thedutchman33/revibe
 AppSupportURL=https://github.com/thedutchman33/revibe/issues
 AppUpdatesURL=https://github.com/thedutchman33/revibe/releases
-DefaultDirName={localappdata}\Programs\Revibe
+DefaultDirName={#DefaultDirName}
 DefaultGroupName=Revibe
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -62,8 +72,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Revibe"; Filename: "{app}\Revibe.exe"; WorkingDir: "{app}"
-Name: "{autodesktop}\Revibe"; Filename: "{app}\Revibe.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+; The running app sets the same AppUserModelID so Windows keeps the Revibe
+; taskbar icon and pinning instead of grouping it under a generic JVM icon.
+Name: "{autoprograms}\Revibe"; Filename: "{app}\Revibe.exe"; WorkingDir: "{app}"; AppUserModelID: "Revibe.Desktop"
+Name: "{autodesktop}\Revibe"; Filename: "{app}\Revibe.exe"; WorkingDir: "{app}"; Tasks: desktopicon; AppUserModelID: "Revibe.Desktop"
 
 [Run]
 Filename: "{app}\Revibe.exe"; Description: "{cm:LaunchProgram,Revibe}"; Flags: nowait postinstall skipifsilent
