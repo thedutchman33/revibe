@@ -118,6 +118,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          $env:REVIBE_HOME = Join-Path $env:RUNNER_TEMP "RevibeCleanData"
           $dir = $env:CLEAN_INSTALL_DIR
           $uninstaller = Join-Path $dir "unins000.exe"
           if (Test-Path -LiteralPath $uninstaller) {
