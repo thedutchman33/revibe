@@ -53,9 +53,10 @@ jobs:
         shell: pwsh
         env:
           DISPATCH_VERSION: ${{ inputs.version }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $false
+          $ErrorActionPreference = "Stop"
           git fetch --tags --force
 
           function Set-Output([string]$name, [string]$value) {
@@ -130,8 +131,7 @@ jobs:
           }
 
           $tag = "v$version"
-          git show-ref --tags --verify --quiet "refs/tags/$tag"
-          if ($LASTEXITCODE -eq 0) {
+          if ((git tag --list $tag) -eq $tag) {
             throw "Tag $tag already exists. Refusing to reuse a version."
           }
 
@@ -157,7 +157,7 @@ jobs:
             }
             $text = ($subject -replace '^[A-Za-z]+(\([^)]*\))?!?:\s*', '').Trim()
             if (-not $text) { $text = $subject }
-            $item = "- $text ([$hash](https://github.com/${{ github.repository }}/commit/$hash))"
+            $item = "- $text ([$hash](https://github.com/$env:REPOSITORY/commit/$hash))"
             switch ($type) {
               "feat" { $groups["Features"] += $item }
               "fix" { $groups["Fixes"] += $item }
@@ -177,7 +177,7 @@ jobs:
           [void]$notes.AppendLine("Download ``Revibe-$version-Setup.exe`` below. It installs per-user without administrator rights and keeps your accounts, playlists, settings and local data.")
           [void]$notes.AppendLine()
           if ($latestTag) {
-            [void]$notes.AppendLine("**Full changelog:** https://github.com/${{ github.repository }}/compare/$latestTag...$tag")
+            [void]$notes.AppendLine("**Full changelog:** https://github.com/$env:REPOSITORY/compare/$latestTag...$tag")
             [void]$notes.AppendLine()
           }
 
@@ -535,19 +535,20 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $false
+          $ErrorActionPreference = "Stop"
           git fetch --tags --force
-          git show-ref --tags --verify --quiet "refs/tags/$env:TAG"
-          if ($LASTEXITCODE -eq 0) { throw "Tag $env:TAG already exists." }
+          if ((git tag --list $env:TAG) -eq $env:TAG) { throw "Tag $env:TAG already exists." }
           $tags = @(git tag --list "v*" |
             Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
             Sort-Object { [version]($_.Substring(1)) } -Descending)
           if ($tags.Count -gt 0 -and [version]$env:VERSION -le [version]($tags[0].Substring(1))) {
             throw "Version $env:VERSION is not newer than $($tags[0])."
           }
-          gh release view $env:TAG 2>$null
-          if ($LASTEXITCODE -eq 0) { throw "Release $env:TAG already exists." }
+          $releases = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          if (@($releases | Where-Object { $_.tagName -eq $env:TAG }).Count -gt 0) {
+            throw "Release $env:TAG already exists."
+          }
 
       - name: Write SHA-256 and update manifest
         shell: pwsh
