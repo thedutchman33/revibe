@@ -1,193 +1,623 @@
-name: Release Windows
+name: Release Revibe
 
+# Every push to main is a release candidate. The workflow computes the next
+# version from the latest tag and the commits since it, runs the full test
+# suite, builds the Inno Setup EXE, upgrades a real installed release on a
+# clean Windows runner, and only then creates the tag and GitHub Release.
+#
+# It never commits the version back to main, so it cannot trigger itself.
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       version:
-        description: "Version without v (for example 0.10.0)"
-        required: true
-        type: string
-      minimum_version:
-        description: "Oldest version allowed to stay installed (0.0.0 disables forced upgrade)"
-        required: false
-        default: "0.0.0"
-        type: string
-      mandatory:
-        description: "Mark this release mandatory"
-        required: true
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
-      release_notes:
-        description: "Release notes (used when release-notes/<version>.md is absent)"
+        description: "Exact version without v (blank = auto-increment)"
         required: false
         type: string
-  # Signed MSI releases are dispatched manually. The tested standalone EXE is
-  # published separately so a version tag does not start the MSI/signing job.
+      dry_run:
+        description: "Build and test without tagging or publishing"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: revibe-release-main
   cancel-in-progress: false
 
+env:
+  JAVA_VERSION: "23"
+
 jobs:
-  windows-release:
+  prepare:
+    name: Prepare version and notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      should_release: ${{ steps.version.outputs.should_release }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      previous_tag: ${{ steps.version.outputs.previous_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute next version and generated release notes
+        id: version
+        shell: pwsh
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          git fetch --tags --force
+
+          function Set-Output([string]$name, [string]$value) {
+            "$name=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+          $sha = (git rev-parse HEAD).Trim()
+          $tags = @(git tag --list "v*" |
+            Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+            Sort-Object { [version]($_.Substring(1)) } -Descending)
+          $latestTag = if ($tags.Count -gt 0) { $tags[0] } else { "" }
+
+          $atHead = @(git tag --points-at HEAD |
+            Where-Object { $_ -match '^v\d+\.\d+\.\d+$' })
+          if ($atHead.Count -gt 0) {
+            Write-Host "HEAD is already released as $($atHead[0]); nothing to publish."
+            Set-Output "should_release" "false"
+            Set-Output "version" ($atHead[0].TrimStart("v"))
+            Set-Output "tag" $atHead[0]
+            Set-Output "previous_tag" ""
+            exit 0
+          }
+
+          if ($latestTag) {
+            git merge-base --is-ancestor $latestTag HEAD
+            if ($LASTEXITCODE -ne 0) {
+              throw "Latest tag $latestTag is not an ancestor of $sha. Refusing to guess a release version."
+            }
+          }
+
+          $range = if ($latestTag) { "$latestTag..HEAD" } else { "HEAD" }
+          $commits = @(git log $range --no-merges --pretty=format:'%h%x09%s')
+          if ($commits.Count -eq 0) {
+            Write-Host "No commits since $latestTag; nothing to publish."
+            Set-Output "should_release" "false"
+            Set-Output "version" ""
+            Set-Output "tag" ""
+            Set-Output "previous_tag" $latestTag
+            exit 0
+          }
+
+          $base = if ($latestTag) { [version]($latestTag.Substring(1)) } else { [version]"0.9.0" }
+          $subjects = $commits | ForEach-Object { ($_ -split "`t", 2)[1] }
+          $breaking = @($subjects | Where-Object {
+            $_ -match '^[A-Za-z]+(\([^)]*\))?!:' -or $_ -match 'BREAKING CHANGE'
+          }).Count -gt 0
+          $feature = @($subjects | Where-Object {
+            $_ -match '^feat(\([^)]*\))?!?:'
+          }).Count -gt 0
+
+          $manual = "$env:DISPATCH_VERSION".Trim().TrimStart("v")
+          if ($manual) {
+            if ($manual -notmatch '^\d+\.\d+\.\d+$') {
+              throw "Manual version must be three numeric parts, for example 0.9.1. Got '$manual'."
+            }
+            $version = $manual
+            $candidate = [version]$version
+            if ($candidate -le $base) {
+              throw "Manual version $version must be greater than latest version $base."
+            }
+          } elseif ($breaking) {
+            # Breaking changes stay within 0.x until a deliberate 1.0 release.
+            $version = if ($base.Major -eq 0) {
+              "$($base.Major).$($base.Minor + 1).0"
+            } else {
+              "$($base.Major + 1).0.0"
+            }
+          } elseif ($feature) {
+            $version = "$($base.Major).$($base.Minor + 1).0"
+          } else {
+            $version = "$($base.Major).$($base.Minor).$($base.Build + 1)"
+          }
+
+          $tag = "v$version"
+          git show-ref --tags --verify --quiet "refs/tags/$tag"
+          if ($LASTEXITCODE -eq 0) {
+            throw "Tag $tag already exists. Refusing to reuse a version."
+          }
+
+          $notes = [System.Text.StringBuilder]::new()
+          [void]$notes.AppendLine("# Revibe $version")
+          [void]$notes.AppendLine()
+          [void]$notes.AppendLine("Automatically generated from the commits in this release.")
+          [void]$notes.AppendLine()
+          $groups = [ordered]@{
+            "Features" = @()
+            "Fixes" = @()
+            "Performance" = @()
+            "Other changes" = @()
+          }
+          foreach ($line in $commits) {
+            $parts = $line -split "`t", 2
+            $hash = $parts[0]
+            $subject = $parts[1]
+            $type = if ($subject -match '^([A-Za-z]+)(\([^)]*\))?!?:') {
+              $Matches[1].ToLowerInvariant()
+            } else {
+              "other"
+            }
+            $text = ($subject -replace '^[A-Za-z]+(\([^)]*\))?!?:\s*', '').Trim()
+            if (-not $text) { $text = $subject }
+            $item = "- $text ([$hash](https://github.com/${{ github.repository }}/commit/$hash))"
+            switch ($type) {
+              "feat" { $groups["Features"] += $item }
+              "fix" { $groups["Fixes"] += $item }
+              "perf" { $groups["Performance"] += $item }
+              default { $groups["Other changes"] += $item }
+            }
+          }
+          foreach ($entry in $groups.GetEnumerator()) {
+            if ($entry.Value.Count -eq 0) { continue }
+            [void]$notes.AppendLine("## $($entry.Key)")
+            [void]$notes.AppendLine()
+            foreach ($item in $entry.Value) { [void]$notes.AppendLine($item) }
+            [void]$notes.AppendLine()
+          }
+          [void]$notes.AppendLine("## Install")
+          [void]$notes.AppendLine()
+          [void]$notes.AppendLine("Download ``Revibe-$version-Setup.exe`` below. It installs per-user without administrator rights and keeps your accounts, playlists, settings and local data.")
+          [void]$notes.AppendLine()
+          if ($latestTag) {
+            [void]$notes.AppendLine("**Full changelog:** https://github.com/${{ github.repository }}/compare/$latestTag...$tag")
+            [void]$notes.AppendLine()
+          }
+
+          $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          [IO.File]::WriteAllText($notesPath, $notes.ToString(), (New-Object Text.UTF8Encoding($false)))
+          Set-Output "should_release" "true"
+          Set-Output "version" $version
+          Set-Output "tag" $tag
+          Set-Output "previous_tag" $latestTag
+          "### Revibe $version" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- Previous: $latestTag" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- Commit: $sha" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - uses: actions/upload-artifact@v4
+        if: steps.version.outputs.should_release == 'true'
+        with:
+          name: release-metadata
+          path: ${{ runner.temp }}/release-notes.md
+          if-no-files-found: error
+          retention-days: 14
+
+  test:
+    name: Full test suite
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: ${{ env.JAVA_VERSION }}
           cache: gradle
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Resolve release metadata
+      - name: Install VLC for the native playback tests
+        shell: pwsh
+        run: |
+          choco install vlc --version=3.0.21 --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw "VLC installation failed." }
+          $vlc = @(
+            (Join-Path $env:ProgramFiles "VideoLAN\VLC"),
+            (Join-Path ${env:ProgramFiles(x86)} "VideoLAN\VLC")
+          ) | Where-Object { Test-Path -LiteralPath (Join-Path $_ "libvlc.dll") } |
+            Select-Object -First 1
+          if (-not $vlc) { throw "VLC runtime was not found after installation." }
+          "REVIBE_VLC_HOME=$vlc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VLC=$vlc" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: Run all desktop tests
+        shell: pwsh
+        run: |
+          & .\gradlew.bat :shared:desktopTest --console=plain
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "The suite failed (live catalog checks are network-dependent); retrying once."
+            Start-Sleep -Seconds 20
+            & .\gradlew.bat :shared:desktopTest --rerun-tasks --console=plain
+          }
+          if ($LASTEXITCODE -ne 0) { throw "The test suite failed; no release will be published." }
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            shared/build/reports/tests/desktopTest
+            shared/build/test-results/desktopTest
+          if-no-files-found: ignore
+          retention-days: 7
+
+  build:
+    name: Build standalone EXE
+    needs: [prepare, test]
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Inno Setup 6
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed." }
+
+      - name: Build app image and installer
         shell: pwsh
         env:
-          DISPATCH_VERSION: ${{ inputs.version }}
-          DISPATCH_MINIMUM: ${{ inputs.minimum_version }}
-          DISPATCH_MANDATORY: ${{ inputs.mandatory }}
-          DISPATCH_NOTES: ${{ inputs.release_notes }}
-          PUBLISHER: ${{ vars.WINDOWS_PUBLISHER }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          $version = $env:DISPATCH_VERSION
-          if ([string]::IsNullOrWhiteSpace($version)) {
-            $version = "$env:GITHUB_REF_NAME".TrimStart("v")
-          }
-          $version = $version.Trim().TrimStart("v")
-          if ($version -notmatch '^\d+\.\d+\.\d+$') {
-            throw "MSI packageVersion must be three numeric parts, for example 0.10.0. Got '$version'."
-          }
-          $minimum = $env:DISPATCH_MINIMUM
-          if ([string]::IsNullOrWhiteSpace($minimum)) { $minimum = "0.0.0" }
-          if ($minimum -notmatch '^\d+\.\d+\.\d+$') {
-            throw "minimum_version must be three numeric parts. Got '$minimum'."
-          }
-          if ([string]::IsNullOrWhiteSpace($env:PUBLISHER)) {
-            throw "Repository variable WINDOWS_PUBLISHER is required (for example 'CN=Revibe, O=Revibe')."
-          }
-          $mandatory = if ($env:DISPATCH_MANDATORY -eq "true") { "true" } else { "false" }
-          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "MINIMUM_VERSION=$minimum" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "MANDATORY=$mandatory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PUBLISHER=$env:PUBLISHER" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $manifest = "https://github.com/${{ github.repository }}/releases/latest/download/update-manifest.json"
+          & .\tools\build-windows-installer.ps1 `
+            -Version $env:VERSION `
+            -ManifestUrl $manifest `
+            -AllowUnsignedUpdates
+          if ($LASTEXITCODE -ne 0) { throw "Installer build failed." }
 
-      - name: Build MSI and embed update feed
+          $installer = ".\desktopApp\build\installer\Revibe-$env:VERSION-Setup.exe"
+          if (-not (Test-Path -LiteralPath $installer)) {
+            throw "Expected installer was not produced: $installer"
+          }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -LiteralPath $installer -Destination "dist\Revibe-$env:VERSION-Setup.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
+          $sumLine = "$hash  Revibe-$env:VERSION-Setup.exe`n"
+          [IO.File]::WriteAllText(
+            (Join-Path $PWD "dist\SHA256SUMS.txt"),
+            $sumLine,
+            (New-Object Text.UTF8Encoding($false))
+          )
+          "INSTALLER_SHA=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "Installer SHA-256: ``$hash``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revibe-installer
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  install-test:
+    name: Clean install and real EXE upgrade
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: revibe-installer
+          path: dist
+
+      - name: Verify installer checksum
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $installer = Join-Path $PWD "dist\Revibe-$env:VERSION-Setup.exe"
+          if (-not (Test-Path -LiteralPath $installer)) { throw "Downloaded installer is missing." }
+          $line = (Get-Content -Raw -LiteralPath "dist\SHA256SUMS.txt").Trim()
+          $expected = ($line -split '\s+', 2)[0].ToLowerInvariant()
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Installer checksum mismatch." }
+          "INSTALLER_PATH=$installer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Clean per-user install, launch and uninstall
         shell: pwsh
         run: |
-          $manifestUrl = "https://github.com/${{ github.repository }}/releases/latest/download/update-manifest.json"
-          & .\gradlew.bat :desktopApp:packageMsi `
-            "-PrevibeVersion=$env:VERSION" `
-            "-PrevibeUpdateManifestUrl=$manifestUrl" `
-            "-PrevibePublisher=$env:PUBLISHER" `
+          $dir = Join-Path $env:RUNNER_TEMP "RevibeClean"
+          $data = Join-Path $env:RUNNER_TEMP "RevibeCleanData"
+          if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+          if (Test-Path -LiteralPath $data) { Remove-Item -LiteralPath $data -Recurse -Force }
+          $p = Start-Process -FilePath $env:INSTALLER_PATH -Wait -PassThru -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
+            "/TASKS=desktopicon", "/DIR=$dir"
+          )
+          if ($p.ExitCode -ne 0) { throw "Installer exited with $($p.ExitCode)." }
+          foreach ($path in @(
+            (Join-Path $dir "Revibe.exe"),
+            (Join-Path $dir "runtime\lib\modules"),
+            (Join-Path $dir "app\skiko-windows-x64.dll"),
+            (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Revibe.lnk"),
+            (Join-Path $env:USERPROFILE "Desktop\Revibe.lnk")
+          )) {
+            if (-not (Test-Path -LiteralPath $path)) { throw "Missing after install: $path" }
+          }
+
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          Remove-Item Env:JAVA_HOME -ErrorAction SilentlyContinue
+          Remove-Item Env:JDK_HOME -ErrorAction SilentlyContinue
+          $env:REVIBE_HOME = $data
+          $app = Join-Path $dir "Revibe.exe"
+          $running = Start-Process -FilePath $app -PassThru
+          Start-Sleep -Seconds 25
+          $running.Refresh()
+          if ($running.HasExited) { throw "Clean-installed Revibe exited with $($running.ExitCode)." }
+          if (-not (Test-Path -LiteralPath (Join-Path $data "revibe.db"))) {
+            throw "Clean-installed Revibe did not create its database."
+          }
+          Get-Process Revibe -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+
+          $uninstaller = Join-Path $dir "unins000.exe"
+          $u = Start-Process -FilePath $uninstaller -Wait -PassThru -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+          )
+          if ($u.ExitCode -ne 0) { throw "Uninstaller exited with $($u.ExitCode)." }
+          Start-Sleep -Seconds 3
+          if (Test-Path -LiteralPath $dir) { throw "Install directory was not removed." }
+          if (-not (Test-Path -LiteralPath (Join-Path $data "revibe.db"))) {
+            throw "Uninstall deleted user data."
+          }
+
+      - name: Download previous release and install baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_TAG: ${{ needs.prepare.outputs.previous_tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PREVIOUS_TAG)) {
+            throw "No previous release is available to exercise the upgrade."
+          }
+          $previousVersion = $env:PREVIOUS_TAG.TrimStart("v")
+          $baselineDir = Join-Path $env:RUNNER_TEMP "RevibeUpgrade"
+          $data = Join-Path $env:RUNNER_TEMP "RevibeUpgradeData"
+          if (Test-Path -LiteralPath $baselineDir) { Remove-Item -LiteralPath $baselineDir -Recurse -Force }
+          if (Test-Path -LiteralPath $data) { Remove-Item -LiteralPath $data -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP "baseline") | Out-Null
+          gh release download $env:PREVIOUS_TAG `
+            -p "Revibe-$previousVersion-Setup.exe" `
+            -D (Join-Path $env:RUNNER_TEMP "baseline")
+          if ($LASTEXITCODE -ne 0) { throw "Could not download the previous installer." }
+          $previousInstaller = Join-Path $env:RUNNER_TEMP "baseline\Revibe-$previousVersion-Setup.exe"
+          $p = Start-Process -FilePath $previousInstaller -Wait -PassThru -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
+            "/TASKS=desktopicon", "/DIR=$baselineDir"
+          )
+          if ($p.ExitCode -ne 0) { throw "Previous installer exited with $($p.ExitCode)." }
+
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          Remove-Item Env:JAVA_HOME -ErrorAction SilentlyContinue
+          Remove-Item Env:JDK_HOME -ErrorAction SilentlyContinue
+          $env:REVIBE_HOME = $data
+          $app = Join-Path $baselineDir "Revibe.exe"
+          $running = Start-Process -FilePath $app -PassThru
+          Start-Sleep -Seconds 20
+          $running.Refresh()
+          if ($running.HasExited) { throw "Previous Revibe exited with $($running.ExitCode)." }
+          Get-Process Revibe -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+          $db = Join-Path $data "revibe.db"
+          if (-not (Test-Path -LiteralPath $db)) { throw "Previous Revibe did not create its database." }
+          [IO.File]::WriteAllText(
+            (Join-Path $data "update-preserve.marker"),
+            "accounts, playlists, settings and library references must survive",
+            (New-Object Text.UTF8Encoding($false))
+          )
+          "BASELINE_DIR=$baselineDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "UPGRADE_DATA=$data" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "REVIBE_HOME=$data" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "REVIBE_PLAYBACK_ENGINE=javafx" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run production updater handoff against the real Inno EXE
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $env:REVIBE_TEST_UPDATER_INSTALLER = $env:INSTALLER_PATH
+          $env:REVIBE_TEST_UPDATER_APP_DIR = $env:BASELINE_DIR
+          $env:REVIBE_TEST_UPDATER_VERSION = $env:VERSION
+          & .\gradlew.bat :shared:desktopTest `
+            --tests "com.revibe.update.ExeUpdaterHandoffTest" `
             --console=plain
-          if ($LASTEXITCODE -ne 0) { throw "Gradle packaging failed." }
+          if ($LASTEXITCODE -ne 0) { throw "The real EXE updater handoff test failed." }
 
-      - name: Sign and verify the MSI
+      - name: Verify upgraded files, data and launch
         shell: pwsh
         env:
-          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64)) {
-            throw "WINDOWS_CERTIFICATE_BASE64 is required; unsigned releases are not publishable."
-          }
-          $msi = Get-ChildItem "desktopApp/build/compose/binaries/main/msi" -Filter "*.msi" |
+          $entry = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+            Where-Object { $_.DisplayName -eq "Revibe" } |
             Select-Object -First 1
-          if ($null -eq $msi) { throw "No MSI was produced." }
-          $pfx = Join-Path $env:RUNNER_TEMP "revibe-signing.pfx"
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
-          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
-            -Recurse -Filter signtool.exe |
-            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-          if ($null -eq $signtool) { throw "signtool.exe was not found on the runner." }
-          try {
-            & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
-              /f $pfx /p $env:CERTIFICATE_PASSWORD $msi.FullName
-            if ($LASTEXITCODE -ne 0) { throw "signtool failed." }
-          } finally {
-            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          if ($null -eq $entry) { throw "Revibe is not registered after the upgrade." }
+          if ($entry.DisplayVersion -ne $env:VERSION) {
+            throw "Expected installed version $env:VERSION, got $($entry.DisplayVersion)."
           }
-          $signature = Get-AuthenticodeSignature -LiteralPath $msi.FullName
-          if ($signature.Status -ne "Valid") {
-            throw "Authenticode verification failed: $($signature.Status)"
+          if ($entry.InstallLocation.TrimEnd('\') -ne $env:BASELINE_DIR.TrimEnd('\')) {
+            throw "The upgrade changed the install directory: $($entry.InstallLocation)"
           }
-          if ($signature.SignerCertificate.Subject -notlike "*$env:PUBLISHER*") {
-            throw "Signed subject '$($signature.SignerCertificate.Subject)' does not match WINDOWS_PUBLISHER."
+          $db = Join-Path $env:UPGRADE_DATA "revibe.db"
+          if (-not (Test-Path -LiteralPath $db)) { throw "The upgrade deleted the user database." }
+          if (-not (Test-Path -LiteralPath (Join-Path $env:UPGRADE_DATA "update-preserve.marker"))) {
+            throw "The upgrade deleted user data."
           }
 
-      - name: Generate SHA-256 and version manifest
+          Get-Process Revibe -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          Remove-Item Env:JAVA_HOME -ErrorAction SilentlyContinue
+          Remove-Item Env:JDK_HOME -ErrorAction SilentlyContinue
+          $env:REVIBE_HOME = $env:UPGRADE_DATA
+          $app = Join-Path $env:BASELINE_DIR "Revibe.exe"
+          $running = Start-Process -FilePath $app -PassThru
+          Start-Sleep -Seconds 25
+          $running.Refresh()
+          if ($running.HasExited) { throw "Upgraded Revibe exited with $($running.ExitCode)." }
+          Get-Process Revibe -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+
+          $uninstaller = Join-Path $env:BASELINE_DIR "unins000.exe"
+          $u = Start-Process -FilePath $uninstaller -Wait -PassThru -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+          )
+          if ($u.ExitCode -ne 0) { throw "Uninstaller exited with $($u.ExitCode)." }
+          Start-Sleep -Seconds 3
+          if (Test-Path -LiteralPath $env:BASELINE_DIR) { throw "Upgraded install directory was not removed." }
+          if (-not (Test-Path -LiteralPath $db)) { throw "Uninstall deleted user data." }
+
+  publish:
+    name: Tag and publish
+    needs: [prepare, install-test]
+    if: >-
+      needs.prepare.outputs.should_release == 'true' &&
+      needs.install-test.result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: revibe-installer
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-metadata
+          path: metadata
+
+      - name: Refuse duplicate or out-of-order releases
         shell: pwsh
         env:
-          DISPATCH_NOTES: ${{ inputs.release_notes }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $msi = Get-ChildItem "desktopApp/build/compose/binaries/main/msi" -Filter "*.msi" |
-            Select-Object -First 1
-          if ($null -eq $msi) { throw "No MSI was produced." }
-          $dist = Join-Path $PWD "dist"
-          New-Item -ItemType Directory -Force -Path $dist | Out-Null
-          Copy-Item $msi.FullName (Join-Path $dist $msi.Name)
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $msi.FullName).Hash.ToLowerInvariant()
-          $assetName = [uri]::EscapeDataString($msi.Name)
-          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/v$env:VERSION/$assetName"
-
-          $notesFile = Join-Path $PWD "release-notes/$env:VERSION.md"
-          if (-not (Test-Path -LiteralPath $notesFile)) {
-            $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.md"
-            $notes = if ([string]::IsNullOrWhiteSpace($env:DISPATCH_NOTES)) {
-              "See the GitHub release page for Revibe $env:VERSION."
-            } else {
-              $env:DISPATCH_NOTES
-            }
-            [IO.File]::WriteAllText($notesFile, $notes, (New-Object Text.UTF8Encoding($false)))
+          $ErrorActionPreference = "Stop"
+          git fetch --tags --force
+          git show-ref --tags --verify --quiet "refs/tags/$env:TAG"
+          if ($LASTEXITCODE -eq 0) { throw "Tag $env:TAG already exists." }
+          $tags = @(git tag --list "v*" |
+            Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+            Sort-Object { [version]($_.Substring(1)) } -Descending)
+          if ($tags.Count -gt 0 -and [version]$env:VERSION -le [version]($tags[0].Substring(1))) {
+            throw "Version $env:VERSION is not newer than $($tags[0])."
           }
-          $notes = Get-Content -Raw -LiteralPath $notesFile
+          gh release view $env:TAG 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "Release $env:TAG already exists." }
 
+      - name: Write SHA-256 and update manifest
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $assetName = "Revibe-$env:VERSION-Setup.exe"
+          $installer = Join-Path $PWD "dist/$assetName"
+          if (-not (Test-Path -LiteralPath $installer)) { throw "Missing installer asset." }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
+          $sumLine = "$hash  $assetName`n"
+          [IO.File]::WriteAllText(
+            (Join-Path $PWD "dist/SHA256SUMS.txt"),
+            $sumLine,
+            (New-Object Text.UTF8Encoding($false))
+          )
+          $notesPath = Join-Path $PWD "metadata/release-notes.md"
+          $notes = (Get-Content -Raw -LiteralPath $notesPath).Trim()
+          $downloadUrl = "https://github.com/$env:REPOSITORY/releases/download/v$env:VERSION/$assetName"
           $manifest = [ordered]@{
             latestVersion = $env:VERSION
-            minimumVersion = $env:MINIMUM_VERSION
+            minimumVersion = "0.0.0"
             downloadUrl = $downloadUrl
-            releaseNotes = $notes.Trim()
-            mandatory = ($env:MANDATORY -eq "true")
+            releaseNotes = $notes
+            mandatory = $false
             sha256 = $hash
+            installerType = "inno-exe"
             publishedAt = (Get-Date).ToUniversalTime().ToString("o")
           }
-          $manifestPath = Join-Path $dist "update-manifest.json"
+          $manifestPath = Join-Path $PWD "dist/update-manifest.json"
           [IO.File]::WriteAllText(
             $manifestPath,
             ($manifest | ConvertTo-Json -Depth 4),
             (New-Object Text.UTF8Encoding($false))
           )
-          "NOTES_FILE=$notesFile" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "MSI_PATH=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $body = $notes + "`n`n**SHA-256:** ``$hash```n"
+          [IO.File]::WriteAllText(
+            (Join-Path $PWD "dist/release-body.md"),
+            $body,
+            (New-Object Text.UTF8Encoding($false))
+          )
+          "ASSET_NAME=$assetName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Publish GitHub release
+      - name: Create tag and GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          $tag = "v$env:VERSION"
-          gh release view $tag 2>$null
-          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists." }
-          $msi = Get-ChildItem "dist" -Filter "*.msi" | Select-Object -First 1
-          gh release create $tag $msi.FullName "dist/update-manifest.json" `
+          $ErrorActionPreference = "Stop"
+          gh release create $env:TAG `
+            "dist/Revibe-$env:VERSION-Setup.exe" `
+            "dist/SHA256SUMS.txt" `
+            "dist/update-manifest.json" `
+            --target ${{ github.sha }} `
             --title "Revibe $env:VERSION" `
-            --notes-file "$env:NOTES_FILE"
+            --notes-file "dist/release-body.md" `
+            --latest
+          if ($LASTEXITCODE -ne 0) { throw "GitHub Release creation failed." }
 
       - name: Release summary
         shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          "Published Revibe $env:VERSION" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-          "- MSI SHA-256: ``$env:SHA256``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-          "- Manifest: https://github.com/${{ github.repository }}/releases/latest/download/update-manifest.json" |
-            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "## Revibe $env:VERSION published" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- Release: https://github.com/${{ github.repository }}/releases/tag/$env:TAG" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- Installer: ``$env:ASSET_NAME``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- SHA-256: ``$env:SHA256``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "- Update feed: https://github.com/${{ github.repository }}/releases/latest/download/update-manifest.json" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

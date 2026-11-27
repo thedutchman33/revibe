@@ -39,7 +39,7 @@ import com.revibe.update.HttpUpdateManifestClient
 import com.revibe.update.Sha256FileHasher
 import com.revibe.update.UpdateConfig
 import com.revibe.update.UpdateService
-import com.revibe.update.WindowsMsiInstaller
+import com.revibe.update.WindowsInstaller
 import com.revibe.update.WindowsPublisherVerifier
 import com.revibe.youtube.YouTubeMusicSource
 import io.ktor.client.HttpClient
@@ -195,18 +195,22 @@ fun createDesktopGraph(): AppGraph {
     val updatePublisher = System.getenv("REVIBE_UPDATE_PUBLISHER")
         ?.takeIf { it.isNotBlank() }
         ?: RevibeBuildInfo.publisher
+    val allowUnsignedUpdates = System.getenv("REVIBE_ALLOW_UNSIGNED_UPDATES")
+        ?.toBooleanStrictOrNull()
+        ?: RevibeBuildInfo.allowUnsignedUpdates
     val updates = UpdateService(
         config = UpdateConfig(
             currentVersion = RevibeBuildInfo.version,
             manifestUrl = updateManifestUrl,
             publisher = updatePublisher,
             updatesDirectory = updatesDirectory.absolutePath,
+            allowUnsignedInstaller = allowUnsignedUpdates,
         ),
         manifestClient = HttpUpdateManifestClient(http),
         downloader = HttpUpdateDownloader(),
         hasher = Sha256FileHasher(),
         publisherVerifier = WindowsPublisherVerifier(),
-        installer = WindowsMsiInstaller(updatesDirectory),
+        installer = WindowsInstaller(updatesDirectory),
         stateStore = FileUpdateStateStore(updatesDirectory),
         scope = appScope,
     )

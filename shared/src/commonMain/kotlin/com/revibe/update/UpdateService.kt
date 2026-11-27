@@ -183,20 +183,20 @@ class UpdateService(
                 available = _state.value.available
             }
             val update = available ?: return false
-            if (config.publisher.isBlank()) {
+            if (config.publisher.isBlank() && !config.allowUnsignedInstaller) {
                 throw UpdateException(
-                    "This build has no pinned publisher. Automatic installation is disabled.",
+                    "This build has no pinned publisher. Unsigned automatic installation is disabled.",
                 )
             }
             if (!update.downloadUrl.startsWith("https://", ignoreCase = true)) {
                 throw UpdateException("The installer URL is not HTTPS.")
             }
-            if (!update.downloadUrl.substringBefore('?').endsWith(".msi", ignoreCase = true)) {
-                throw UpdateException("This release does not provide a Windows MSI installer.")
-            }
+            val installerExtension = windowsInstallerExtension(update.downloadUrl)
+                ?: throw UpdateException("This release does not provide a Windows EXE or MSI installer.")
 
             val safeVersion = update.version.replace(Regex("[^0-9A-Za-z._-]"), "_")
-            val destination = "${config.updatesDirectory.trimEnd('/', '\\')}/downloads/Revibe-$safeVersion.msi"
+            val destination =
+                "${config.updatesDirectory.trimEnd('/', '\\')}/downloads/Revibe-$safeVersion.$installerExtension"
             _state.value = _state.value.copy(
                 phase = UpdatePhase.DOWNLOADING,
                 available = update,
@@ -239,16 +239,23 @@ class UpdateService(
                 )
             }
 
-            _state.value = _state.value.copy(
-                phase = UpdatePhase.VERIFYING,
-                message = "Verifying the Windows publisher signature…",
-            )
-            val publisher = publisherVerifier.verify(destination, config.publisher)
-            if (publisher.status != PublisherStatus.VALID) {
-                installer.discard(destination)
-                throw UpdateException(
-                    publisher.message
-                        ?: "The installer signature could not be verified and was discarded.",
+            if (config.publisher.isNotBlank()) {
+                _state.value = _state.value.copy(
+                    phase = UpdatePhase.VERIFYING,
+                    message = "Verifying the Windows publisher signature…",
+                )
+                val publisher = publisherVerifier.verify(destination, config.publisher)
+                if (publisher.status != PublisherStatus.VALID) {
+                    installer.discard(destination)
+                    throw UpdateException(
+                        publisher.message
+                            ?: "The installer signature could not be verified and was discarded.",
+                    )
+                }
+            } else {
+                _state.value = _state.value.copy(
+                    phase = UpdatePhase.VERIFYING,
+                    message = "Verifying the unsigned installer by SHA-256…",
                 )
             }
             // Re-hash after the signature check so a changed file is never launched.
@@ -260,7 +267,7 @@ class UpdateService(
             _state.value = _state.value.copy(
                 phase = UpdatePhase.INSTALLING,
                 progress = null,
-                message = "Closing Revibe and handing off to Windows Installer…",
+                message = "Closing Revibe and running the verified installer…",
                 notify = true,
             )
             val handoff = installer.launch(destination, update.version)
@@ -347,8 +354,8 @@ class UpdateService(
         val downloadUrl = manifest.downloadUrl
             ?.takeIf { it.startsWith("https://", ignoreCase = true) }
             ?: throw UpdateException("The update has no HTTPS download URL.")
-        if (!downloadUrl.substringBefore('?').endsWith(".msi", ignoreCase = true)) {
-            throw UpdateException("The update does not provide a Windows MSI installer.")
+        if (windowsInstallerExtension(downloadUrl) == null) {
+            throw UpdateException("The update does not provide a Windows EXE or MSI installer.")
         }
         val sha = manifest.sha256
             ?.trim()
@@ -383,7 +390,7 @@ class UpdateService(
         } else if (result.succeeded) {
             _state.value = _state.value.copy(
                 phase = UpdatePhase.ERROR,
-                message = "Windows Installer finished, but Revibe is still version ${config.currentVersion}.",
+                message = "The installer finished, but Revibe is still version ${config.currentVersion}.",
                 progress = null,
                 notify = true,
             )
@@ -410,5 +417,15 @@ class UpdateService(
             UpdatePhase.VERIFYING,
             UpdatePhase.INSTALLING,
         )
+    }
+}
+
+/** Returns the supported installer extension, or null for an unsafe or unsupported URL. */
+internal fun windowsInstallerExtension(url: String): String? {
+    val path = url.substringBefore('?').substringBefore('#')
+    return when {
+        path.endsWith(".exe", ignoreCase = true) -> "exe"
+        path.endsWith(".msi", ignoreCase = true) -> "msi"
+        else -> null
     }
 }

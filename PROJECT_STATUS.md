@@ -1,6 +1,6 @@
 # Project Status
 
-Milestone: **0.9.0 — cloud accounts, multi-device sync and automatic updates (client)**
+Milestone: **0.9.0 — cloud accounts, multi-device sync and automatic EXE updates**
 Date: 2026-11-27
 Platform: Windows 10/11, desktop JVM
 
@@ -32,7 +32,7 @@ remain planned.
 | Account/sync UI | **Implemented** | Sign-in/create, confirmation, profile/avatar, sync status, last sync, Sync Now, offline/error and logout |
 | Search history | **Implemented** | Persisted locally; cloud upload opt-in, off by default |
 | Shared homepage activity | **Implemented** | Pulled history/likes/follows feed the existing maturity model |
-| Automatic updates | **Implemented (unverified installer)** | HTTPS manifest, SemVer policy, SHA-256, Authenticode pin, separate MSI handoff, release workflow; real signed upgrade pending |
+| Automatic updates | **Implemented** | Push-to-main releases, HTTPS manifest, SHA-256, optional Authenticode pin, silent Inno EXE handoff, CI-verified upgrade from the previous release |
 | Settings → About Revibe | **Implemented** | Installed version, check button, status, notes, progress, retry, skip/remind |
 | Miniplayer | **Implemented** | Floating 400×336 dp Spotify-style card: drag, hover transport, seek, like, resize; main window stays open |
 | Playlist detail | **Spotify-style redesign** | Tinted hero, date-added/duration table, hover actions, search and sort; no download action |
@@ -71,9 +71,11 @@ remain planned.
 - New account/sync coverage: `JdbcSyncStoreTest` (8), `AuthApiTest` (6), `CloudSyncApiTest` (5),
   `SyncEngineTwoDeviceTest` (6), `DpapiAuthSessionStoreTest` (1) — **26 passing**.
 - Automatic-update coverage: SemVer, manifest parsing, optional/mandatory policy, skip/remind,
-  progress, interrupted download, SHA-256 mismatch, Authenticode rejection, installer failure and
-  success recovery, database preservation and unpackaged-build refusal. A real signed MSI upgrade
-  and relaunch remain pending.
+  progress, interrupted download, SHA-256 mismatch, Authenticode rejection, unsigned-mode opt-in,
+  EXE URL handling, installer failure and success recovery, database preservation and unpackaged-build
+  refusal. The release workflow additionally upgrades the previous GitHub release with the actual Inno
+  EXE through the production handoff helper and verifies the registry version, install directory, data
+  and relaunch.
 - Visual QA in the live app: account-not-configured card, sign-in form, create-account form and the
   profile-menu Account & sync entry at 1440 dp. Captures in `build/visual-qa/account-*.png`.
 - Update visual QA at 1440 dp: disabled/configured About section and unreachable-server error with
@@ -115,11 +117,11 @@ remain planned.
   used with matched sizes, weights, spacing and opacity.
 - Long playlist scrolling, cross-playlist drag-and-drop and full accessibility traversal were not
   exhaustively tested.
-- Long-session and full accessibility testing were not run. Installer coverage is local plus the
-  clean Windows runner workflow; a physical second machine has not been used.
-- Automatic update installation has not been exercised with a real signed MSI, GitHub release,
-  Windows Installer elevation or packaged relaunch. Unit tests use a fake downloader/installer and do
-  not claim the real handoff works. MSIX/App Installer is documented only as a future path.
+- Long-session and full accessibility testing were not run. Installer coverage is local plus GitHub
+  Actions Windows runners; a physical second machine has not been used.
+- The EXE is not Authenticode signed. Release builds explicitly opt in to SHA-256-only verification;
+  a code-signing certificate and publisher pin remain pending. `v0.9.0` must be replaced by the first
+  EXE release manually because its updater only accepted MSI. MSIX/App Installer is a future path.
 
 ## Next
 

@@ -7,10 +7,10 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Never replaces running files. The app exits, a separate PowerShell process
- * waits for this PID, runs the verified MSI with Windows Installer, writes the
- * exit code, then relaunches Revibe. The next launch reads that result.
+ * waits for this PID, runs the verified Inno Setup EXE or MSI, writes the exit
+ * code, then relaunches Revibe. The next launch reads that result.
  */
-class WindowsMsiInstaller(
+class WindowsInstaller(
     private val updatesDirectory: File,
     private val packagedAppPath: String? = detectPackagedAppPath(),
 ) : UpdateInstaller {
@@ -23,8 +23,11 @@ class WindowsMsiInstaller(
             if (!installer.isFile) {
                 return@withContext InstallHandoff(false, "The downloaded installer is missing.")
             }
-            if (!installer.extension.equals("msi", ignoreCase = true)) {
-                return@withContext InstallHandoff(false, "Only a Windows MSI can be installed automatically.")
+            if (installer.extension.lowercase() !in setOf("exe", "msi")) {
+                return@withContext InstallHandoff(
+                    false,
+                    "Only a Windows EXE or MSI can be installed automatically.",
+                )
             }
             val appPath = packagedAppPath?.takeIf { File(it).isFile }
                 ?: return@withContext InstallHandoff(
@@ -128,10 +131,17 @@ internal fun updaterScript(
                     ((Get-Date) -lt ${'$'}deadline)) {
                     Start-Sleep -Milliseconds 250
                 }
-                ${'$'}msiexec = Join-Path ${'$'}env:SystemRoot 'System32\msiexec.exe'
-                ${'$'}process = Start-Process -FilePath ${'$'}msiexec `
-                    -ArgumentList @('/i', ('"' + ${'$'}installer + '"'), '/passive', '/norestart') `
-                    -Wait -PassThru
+                ${'$'}extension = [IO.Path]::GetExtension(${'$'}installer).ToLowerInvariant()
+                if (${'$'}extension -eq '.exe') {
+                    ${'$'}process = Start-Process -FilePath ${'$'}installer `
+                        -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CLOSEAPPLICATIONS') `
+                        -Wait -PassThru
+                } else {
+                    ${'$'}msiexec = Join-Path ${'$'}env:SystemRoot 'System32\msiexec.exe'
+                    ${'$'}process = Start-Process -FilePath ${'$'}msiexec `
+                        -ArgumentList @('/i', ('"' + ${'$'}installer + '"'), '/passive', '/norestart') `
+                        -Wait -PassThru
+                }
                 ${'$'}exitCode = [int]${'$'}process.ExitCode
             } catch {
                 ${'$'}exitCode = -1

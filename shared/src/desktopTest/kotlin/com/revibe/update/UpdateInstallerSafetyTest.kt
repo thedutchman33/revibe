@@ -27,8 +27,8 @@ class UpdateInstallerSafetyTest {
 
     @Test
     fun `unpackaged build never launches an installer`() = runBlocking {
-        val installer = File(tempDir, "Revibe-0.10.0.msi").apply { writeText("fake msi") }
-        val handoff = WindowsMsiInstaller(tempDir, packagedAppPath = null)
+        val installer = File(tempDir, "Revibe-0.10.0-Setup.exe").apply { writeText("fake exe") }
+        val handoff = WindowsInstaller(tempDir, packagedAppPath = null)
             .launch(installer.absolutePath, "0.10.0")
         assertFalse(handoff.accepted)
         assertTrue(installer.exists())
@@ -36,7 +36,7 @@ class UpdateInstallerSafetyTest {
 
     @Test
     fun `unsigned installer is not accepted as trusted`() = runBlocking {
-        val installer = File(tempDir, "Revibe-0.10.0.msi").apply { writeText("not signed") }
+        val installer = File(tempDir, "Revibe-0.10.0-Setup.exe").apply { writeText("not signed") }
         val check = WindowsPublisherVerifier().verify(installer.absolutePath, "CN=Revibe")
         assertNotEquals(PublisherStatus.VALID, check.status)
     }
@@ -46,11 +46,13 @@ class UpdateInstallerSafetyTest {
         if (!System.getProperty("os.name").contains("Windows", ignoreCase = true)) return
         val script = updaterScript(
             appPid = 1234L,
-            installerPath = "C:\\Users\\Test User\\AppData\\Roaming\\Revibe\\updates\\downloads\\Revibe-0.10.0.msi",
+            installerPath = "C:\\Users\\Test User\\AppData\\Roaming\\Revibe\\updates\\downloads\\Revibe-0.10.0-Setup.exe",
             appPath = "C:\\Program Files\\Revibe\\Revibe.exe",
             resultPath = "C:\\Users\\Test User\\AppData\\Roaming\\Revibe\\updates\\install-result.json",
             targetVersion = "0.10.0",
         )
+        assertTrue(script.contains("/VERYSILENT"), "Inno silent switches are missing")
+        assertTrue(script.contains("/CLOSEAPPLICATIONS"), "Inno close-applications switch is missing")
         val scriptFile = File(tempDir, "parse-updater.ps1").apply { writeText(script) }
         val command = """
             ${'$'}tokens = ${'$'}null
@@ -70,6 +72,13 @@ class UpdateInstallerSafetyTest {
         if (!finished) process.destroyForcibly()
         assertTrue(finished, "PowerShell parser timed out")
         assertEquals(0, process.exitValue(), output)
+    }
+
+    @Test
+    fun `installer URL accepts EXE and MSI but rejects other files`() {
+        assertEquals("exe", windowsInstallerExtension("https://example.test/Revibe-1.0.0-Setup.exe?x=1"))
+        assertEquals("msi", windowsInstallerExtension("https://example.test/Revibe-1.0.0.msi"))
+        assertEquals(null, windowsInstallerExtension("https://example.test/Revibe.zip"))
     }
 
     @Test

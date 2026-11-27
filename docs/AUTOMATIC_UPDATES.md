@@ -1,259 +1,172 @@
 # Automatic Windows Updates
 
-Revibe checks a remotely hosted HTTPS manifest, verifies a downloaded MSI and
-pins the Authenticode publisher before handing installation to Windows
-Installer. The app never replaces its own running files and never deletes the
-user data directory.
+Revibe checks an HTTPS manifest, downloads a verified Windows installer, and
+hands installation to a separate process after the app closes. Release builds
+use the per-user Inno Setup EXE published by GitHub Actions. Account data,
+playlists, settings, the local library and artwork cache live outside the
+install directory and are never touched by the updater.
 
-**Status:** client, manifest parser, release workflow and safety boundaries are
-implemented. The update logic has automated tests. A real signed MSI upgrade and
-restart on a packaged build has **not** been run yet; see
-[Verified and pending](#verified-and-pending).
+**Status:** implemented. The release pipeline tests a clean install and a real
+upgrade from the previous release using the production updater script against
+the actual Inno Setup EXE. The first build that can use this path is the first
+release published after `v0.9.0`; `v0.9.0` itself is MSI-only and cannot upgrade
+itself to an EXE release.
 
-## Version source
+## Versioning and releases
 
-`gradle.properties` is the single source of truth:
+The Git tag is the released version. `gradle.properties` keeps `0.9.0` as the
+development default, while CI passes the computed version into Gradle at build
+time:
 
-```properties
-revibeVersion=0.9.0
-revibeUpdateManifestUrl=
-revibePublisher=
+```powershell
+powershell -File tools/build-windows-installer.ps1 `
+  -Version 0.10.0 `
+  -ManifestUrl "https://github.com/thedutchman33/revibe/releases/latest/download/update-manifest.json" `
+  -AllowUnsignedUpdates
 ```
 
-Gradle generates `com.revibe.RevibeBuildInfo` for the app and uses the same
-`revibeVersion` for Compose's `packageVersion`. A release build passes the feed
-URL and publisher at build time:
+Every push to `main` runs `.github/workflows/release.yml`. The workflow:
 
-```bash
-./gradlew :desktopApp:packageMsi \
-  -PrevibeVersion=0.10.0 \
-  -PrevibeUpdateManifestUrl=https://github.com/<owner>/<repo>/releases/latest/download/update-manifest.json \
-  -PrevibePublisher="CN=Revibe, O=Revibe"
-```
+1. finds the newest `vX.Y.Z` tag and the commits since it;
+2. increments the version from commit subjects:
+   - `feat:` → minor (`0.9.0` → `0.10.0`);
+   - `fix:`, `perf:`, `docs:`, `ci:` or any other conventional type → patch;
+   - `type!:` or `BREAKING CHANGE` → minor while on `0.x`, major from `1.0.0`;
+3. runs the full desktop test suite on Windows with VLC installed;
+4. builds the app image and `Revibe-<version>-Setup.exe` with the update feed
+   baked in;
+5. performs a clean install/launch/uninstall on a fresh Windows runner;
+6. downloads the previous GitHub release, installs it, runs the production
+   updater helper against the new Inno EXE, and verifies the version, install
+   directory, database, marker data and relaunch;
+7. only if every job passed, creates the tag at the tested commit and publishes
+   the release with the EXE, `SHA256SUMS.txt` and `update-manifest.json`.
 
-Environment overrides for development and testing:
+It does **not** commit a version bump back to `main`, so it cannot trigger
+itself. A concurrency group serializes releases. Before publishing, the job
+rechecks that the tag and release do not exist and that the version is newer
+than the latest tag. If HEAD is already tagged, the run is a no-op. Failed tests
+or failed install checks stop the pipeline before any tag is created.
 
-| Variable | Purpose |
-| --- | --- |
-| `REVIBE_UPDATE_MANIFEST_URL` | Overrides the baked HTTPS manifest URL |
-| `REVIBE_UPDATE_PUBLISHER` | Overrides the pinned signer subject/CN |
-
-With a blank manifest URL, update checks stay disabled and the Settings update
-row is hidden. The top-bar update control remains visible and explains that
-updates apply to installed builds. The repository contains no personal GitHub
-URL. The release workflow supplies the repository-specific URL.
+To test the whole pipeline without publishing, run the workflow manually with
+`dry_run` enabled. A manual `version` input can recover a specific release, but
+it must be greater than the latest tag.
 
 ## Manifest
 
-The manifest is ordinary JSON:
+The manifest is attached to every release:
 
 ```json
 {
   "latestVersion": "0.10.0",
-  "minimumVersion": "0.9.0",
-  "downloadUrl": "https://github.com/owner/repo/releases/download/v0.10.0/Revibe-0.10.0.msi",
-  "releaseNotes": "Faster sync.\nSafer update handoff.",
+  "minimumVersion": "0.0.0",
+  "downloadUrl": "https://github.com/thedutchman33/revibe/releases/download/v0.10.0/Revibe-0.10.0-Setup.exe",
+  "releaseNotes": "Generated release notes…",
   "mandatory": false,
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "installerType": "inno-exe",
   "publishedAt": "2026-11-27T12:00:00Z"
 }
 ```
 
-- `latestVersion` is SemVer. A leading `v` is accepted.
-- `minimumVersion` is the oldest version allowed to remain installed. If the
-  installed version is below it, the update is mandatory even when
-  `mandatory` is false. Use `0.0.0` when no floor is needed.
-- `mandatory` forces the update independently of `minimumVersion`.
-- `downloadUrl` must be HTTPS and end in `.msi`.
-- `sha256` must be 64 lowercase hexadecimal characters. It is required for an
-  available update.
-- `releaseNotes` may be empty. `publishedAt` is display metadata.
-- Unknown JSON fields are ignored for forward compatibility.
+- `downloadUrl` must use HTTPS and end in `.exe` or `.msi`.
+- `sha256` is required and must be 64 hexadecimal characters.
+- `minimumVersion` forces an update when the installed version is below it.
+- `releaseNotes` is generated from the commits in the release.
+- Unknown fields are ignored.
 
-The manifest is capped at 1 MB and is fetched with `Cache-Control: no-cache`.
-The feed itself is protected by HTTPS; the installer is additionally protected
-by SHA-256 and Authenticode. There is no separate detached manifest signature:
-manifest authenticity relies on the HTTPS origin, and the pinned publisher and
-hash prevent launching an installer that is not from the expected signer.
+The stable feed URL is:
 
-## Check lifecycle
+```text
+https://github.com/thedutchman33/revibe/releases/latest/download/update-manifest.json
+```
 
-`UpdateService` is created once in `DesktopGraph` and started from
-`AppViewModel`:
+`REVIBE_UPDATE_MANIFEST_URL` overrides the baked URL for development. A blank
+URL disables checks. `REVIBE_UPDATE_PUBLISHER` overrides the pinned signer.
+`REVIBE_ALLOW_UNSIGNED_UPDATES` overrides the unsigned-release policy.
 
-1. On startup, read `updates/install-result.json` written by the previous
-   installer handoff. A successful result shows "Updated to Revibe x"; a failure
-   shows the Windows Installer exit code and offers retry.
-2. Wait 10 seconds, then check the manifest. This never blocks window creation,
-   catalog loading or playback.
-3. Check again every 6 hours while the app runs.
-4. The update control left of Home can check immediately.
-5. A manual check bypasses "Remind me later" and "Skip this version" for the
-   notification, but never bypasses mandatory policy.
+## Installation safety
 
-Network work is in the graph's background scope with timeouts (25 seconds for
-the manifest). Errors become UI state, not crashes. An update being available
-never pauses, seeks or otherwise alters the player.
+1. The manifest and installer must use HTTPS. Redirects are followed and the
+   final URI is checked again.
+2. The installer streams to
+   `%USERPROFILE%\.revibe\updates\downloads\Revibe-<version>-Setup.exe.part`
+   and is atomically renamed only after a complete download.
+3. Both the streaming hash and the hash read from disk must match the manifest
+   SHA-256. A mismatch discards the file.
+4. If `revibePublisher` is set, Windows Authenticode must return `Valid` and the
+   signer subject must contain that exact publisher. A configured-but-invalid
+   signature is always rejected.
+5. Release builds currently set `revibeAllowUnsignedUpdates=true` because there
+   is no code-signing certificate. With that explicit opt-in, an unsigned EXE is
+   accepted only after the SHA-256 checks against the HTTPS GitHub release
+   manifest. A build without either a publisher pin or the opt-in refuses to
+   install.
+6. The file is hashed again immediately before launch.
+7. The app writes a PowerShell helper, starts it, and then closes through the
+   normal window/tray shutdown path. The helper waits for the app PID and runs:
+   `Revibe-<version>-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS`
+   (MSI files still use `msiexec /i … /passive /norestart` for compatibility.)
+8. The helper writes `updates/install-result.json` and relaunches Revibe. The
+   next launch confirms the installed version or reports the failure and offers
+   a retry.
 
-## User interface
-
-The control immediately left of the Home button is the primary update entry
-point. It reads "Check updates" in its idle state, changes to "Update
-available" when a release is ready, shows download/verification progress, and
-starts installation when clicked. Updates are not checked from Settings in a
-development build, so the obsolete "not configured" status is not shown there.
-
-Settings → About Revibe keeps a compact update row when a feed is configured:
-
-- current version;
-- short status and Check/Update/Retry action;
-- download, verification and installation progress.
-
-Release notes and the optional Remind me later / Skip this version actions are
-shown in the non-modal notification above the player. It never covers transport
-controls. Mandatory updates have no skip/later controls but still do not stop
-playback or close the app automatically.
-
-Visual QA in the live app covered the development-build state, the new
-Settings/Account layouts and the top-bar "Check updates" control at 1920×1140
-(`build/visual-qa/settings-after-bottom.png`,
-`account-signed-in-after.png`, `home-update-button.png`). The
-"Update available" label, the available-update notification and the
-signed-installer progress state were **not** visually exercised because no real
-release feed or signed MSI exists yet; unit state transitions stand in for them
-and are not claimed as a live UI run.
-
-## Download and installation safety
-
-1. **HTTPS only.** The manifest and installer must start with `https://`.
-   Redirects are followed, then the final URI is checked again; non-HTTPS
-   redirects are rejected.
-2. **Streaming download.** The installer is written to
-   `%USERPROFILE%\.revibe\updates\downloads\Revibe-<version>.msi.part`, hashed
-   while streaming, then atomically renamed. Interruption deletes the partial
-   and final files.
-3. **SHA-256.** The downloaded hash and the hash computed from disk must both
-   match the manifest. Mismatches discard the file.
-4. **Authenticode.** PowerShell's `Get-AuthenticodeSignature` must return
-   `Valid`; the signer subject must contain the publisher pinned in the build.
-   A blank pin blocks installation rather than trusting any signer.
-5. **Re-hash before launch.** The file is hashed again after signature
-   verification so a changed file is never launched.
-6. **Separate installer process.** The app writes a generated PowerShell
-   helper, launches it, and calls the normal window shutdown path. The helper
-   waits for the app PID, runs:
-   `msiexec /i <verified.msi> /passive /norestart`
-   then writes `updates/install-result.json` and relaunches Revibe.
-7. **No direct file replacement.** Revibe never writes into its running
-   installation directory.
-8. **Recovery.** A failed installer relaunches the old app, which reads the
-   result and shows an error with retry. A success is confirmed on the relaunch.
-9. **No automatic installation in a dev build.** If a packaged launcher path
-   cannot be identified, installation is blocked with a clear message; the
-   downloaded file is discarded.
-
-`/passive` shows the Windows Installer progress. The app's own state says
-"Installing" while the handoff starts, then the app closes. The detailed
-installation progress lives in the Windows Installer window; it is not
-scraped from MSI internals.
+The installer uses the same stable Inno AppId and upgrades the existing
+per-user install in place. It creates no new data directory. The uninstaller
+removes only the application directory and shortcuts.
 
 ## Data preservation
 
-The updater only writes under `%USERPROFILE%\.revibe\updates`:
+The updater writes only under `%USERPROFILE%\.revibe\updates`:
 
-```
+```text
 %USERPROFILE%\.revibe\
-├── revibe.db                 SQLite: playlists, likes, follows, history, search history, settings
+├── revibe.db                 SQLite: playlists, likes, follows, history, settings
 ├── account.session           DPAPI-encrypted Supabase session
 ├── cache\art\                artwork cache
 └── updates\
     ├── state.json            skip, reminder, last check
-    ├── install-result.json   last Windows Installer result
+    ├── install-result.json   last installer result
     ├── updater.log           handoff log
     └── downloads\            verified installer / partial files
 ```
 
-No update path deletes, moves or recreates `revibe.db`, `account.session`, the
-local music folder or the user data directory. The MSI installs application
-binaries in the normal Windows install location. Unit tests verify that an
-update flow leaves an existing SQLite file byte-for-byte unchanged.
+The CI upgrade test creates a database and a marker file in the data directory,
+installs the new EXE over the previous release through the production helper,
+then verifies both still exist, the install directory is unchanged, the registry
+version is the new version, and the upgraded app launches. The clean-install
+test also uninstalls and verifies that `revibe.db` survives.
 
-## GitHub Releases workflow
+## Unsigned-build trade-off
 
-`.github/workflows/release.yml` runs on a `v*` tag or manual dispatch. It:
-
-1. resolves SemVer, minimum version and mandatory flag;
-2. builds the MSI with the repository's stable manifest URL and publisher pin;
-3. signs the MSI with `signtool` and verifies the result;
-4. computes SHA-256;
-5. writes `update-manifest.json`;
-6. publishes the MSI, manifest and release notes with `gh release create`.
-
-Required repository configuration:
-
-| Name | Type | Purpose |
-| --- | --- | --- |
-| `WINDOWS_PUBLISHER` | repository variable | Exact signer subject/CN, e.g. `CN=Revibe, O=Revibe` |
-| `WINDOWS_CERTIFICATE_BASE64` | secret | Base64 PFX for Authenticode |
-| `WINDOWS_CERTIFICATE_PASSWORD` | secret | PFX password |
-
-The workflow fails rather than publishing an unsigned release. Release notes
-come from `release-notes/<version>.md`; the manual dispatch text is a fallback.
-The stable feed URL is:
-
-```
-https://github.com/<owner>/<repo>/releases/latest/download/update-manifest.json
-```
-
-This means the URL baked into a build is repository-specific only through the
-release workflow, not hardcoded in source.
+The EXE and manifest are both hosted under the same GitHub repository. SHA-256
+protects against corrupted or truncated downloads, and HTTPS protects transport,
+but neither is a substitute for an independently held code-signing key. Until an
+Authenticode certificate is configured, a compromise of the GitHub account could
+replace both the manifest and installer. The pipeline makes the unsigned mode an
+explicit release-build setting (`revibeAllowUnsignedUpdates=true`) rather than a
+development default. Adding a certificate and setting `revibePublisher` restores
+the stronger pinned-signer check without changing the update flow.
 
 ## Verified and pending
 
-Automated coverage:
+Covered by automated tests and CI:
 
-- SemVer precedence, including prereleases.
-- Manifest parsing and defaults.
-- Optional update, no-update and mandatory-from-minimum policy.
-- Skip and reminder persistence/notification suppression.
-- Download progress visibility.
-- Interrupted download handling.
-- SHA-256 mismatch rejection and discard.
-- Invalid publisher rejection.
-- Installer rejection and failure-result recovery.
-- Successful install result confirmation.
-- Database file preservation.
-- Unpackaged builds refusing to launch an installer.
-- Real `Get-AuthenticodeSignature` rejection of an unsigned file.
+- SemVer precedence, manifest parsing, mandatory policy, skip/remind.
+- EXE acceptance and rejection of non-installer URLs.
+- SHA-256 mismatch and discard.
+- Authenticode rejection when a publisher is pinned.
+- Unsigned-mode opt-in and refusal without it.
+- Production updater PowerShell syntax and Inno silent switches.
+- Real Inno EXE install over the previous release, result JSON, registry
+  version, unchanged install directory, data preservation and relaunch.
+- Clean install without Java/JDK/Gradle, shortcuts and uninstall cleanup.
 
-Not yet verified:
+Pending or out of scope:
 
-- A real signed MSI produced by the workflow.
-- Upgrade of a previously installed MSI on a clean Windows machine.
-- Windows Installer elevation/`/passive` behavior in the chosen install scope.
-- Relaunch and install-result confirmation after a real upgrade.
-- A real GitHub release/manifest endpoint and CDN redirects.
-- Update while music is playing in a packaged build (the update path does not
-  touch the player, but this end-to-end case is not claimed).
-- Mandatory-update UX against a real feed.
-- MSIX/Windows App Installer packaging.
-
-## MSIX investigation
-
-MSIX with Windows App Installer is a plausible future path: automatic updates,
-package identity and rollback are first-class. It is not a drop-in replacement
-for the current Compose Desktop MSI:
-
-- MSIX requires a trusted code-signing certificate and package identity; the
-  current build is a jpackage/Compose MSI with no package identity.
-- App Installer updates require a signed `.appinstaller`/MSIX feed and a
-  compatible install location/identity. The existing per-user `jpackage`
-  launcher and `%USERPROFILE%\.revibe` data path must be revalidated.
-- Native dependencies (LibVLC, JavaFX/Skiko, media keys) must be staged and
-  tested inside the package.
-- The current MSI handoff, `/passive` progress and install-result recovery would
-  be replaced rather than layered on top.
-
-No packaging format was switched. The MSI path remains the release target until
-a packaged MSIX spike proves compatible with playback, local data and the
-existing installer lifecycle.
+- Authenticode signing and a signed end-to-end release.
+- Visual click-through of the update banner on a headless runner; the UI is
+  unit-tested and the actual handoff is exercised by CI.
+- MSIX/App Installer packaging.
+- The `v0.9.0` → EXE bootstrap, which must be a one-time manual install because
+  `v0.9.0` only accepts MSI downloads.

@@ -150,7 +150,7 @@ fun UpdateNotice(vm: AppViewModel) {
                         Spacer(Modifier.width(9.dp))
                         Text(
                             if (state.phase == UpdatePhase.INSTALLING) {
-                                "Windows Installer continues after Revibe closes."
+                                "The installer continues after Revibe closes."
                             } else {
                                 "Checking the download before it is opened."
                             },

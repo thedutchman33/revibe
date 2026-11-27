@@ -1,5 +1,33 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Push-to-main release pipeline. Each push computes the next SemVer from the latest tag and
+  conventional commit subjects, runs the full suite, builds the Inno Setup EXE, verifies a clean
+  install and a real upgrade from the previous GitHub release on a fresh Windows runner, then creates
+  the tag and publishes the EXE, `SHA256SUMS.txt`, `update-manifest.json` and generated release notes.
+- EXE auto-update support. The updater now accepts the Inno Setup `.exe`, downloads and hashes it over
+  HTTPS, and hands it to a separate silent installer process that preserves the install directory and
+  relaunches Revibe. MSI remains accepted for compatibility.
+- Explicit `revibeAllowUnsignedUpdates` build policy. Release builds enable the current unsigned
+  GitHub-release path; a configured `revibePublisher` still requires a valid Authenticode signature.
+- Real EXE handoff integration test that runs the production updater PowerShell helper against the
+  actual Inno installer built by CI.
+
+### Changed
+
+- Releases are no longer version-bumped in `gradle.properties` and no longer published from the
+  manual signed-MSI workflow. The tag is the released version; CI passes it into Gradle.
+- The release workflow is serialized, skips already-tagged commits, rechecks duplicate tags and
+  releases before publishing, and never commits back to `main`, preventing version conflicts and
+  workflow loops.
+
+### Fixed
+
+- Update UI copy no longer promises Windows Installer-specific progress when an Inno EXE is used.
+
 ## [0.9.0] - 2026-11-26
 
 ### Added

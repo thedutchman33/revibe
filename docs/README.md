@@ -5,9 +5,9 @@ Start with the README at the repository root, then:
 Top-level status: [PROJECT_STATUS.md](../PROJECT_STATUS.md) · changes: [CHANGELOG.md](../CHANGELOG.md).
 
 **Current milestones:** [ACCOUNT_SYNC.md](ACCOUNT_SYNC.md) — Supabase accounts, SQLite outbox and
-multi-device sync; [AUTOMATIC_UPDATES.md](AUTOMATIC_UPDATES.md) — HTTPS manifest, verified MSI
-download, Authenticode publisher pin and GitHub Releases workflow. Both documents separate tested
-logic from the still-pending live-service/packaged-installer runs. Previous visual QA remains in
+multi-device sync; [AUTOMATIC_UPDATES.md](AUTOMATIC_UPDATES.md) — push-to-main GitHub Releases,
+HTTPS manifest, verified Inno EXE download, optional Authenticode pin and real upgrade testing. Both
+documents separate tested logic from still-pending live-service work. Previous visual QA remains in
 [VISUAL_QA_0_8.md](VISUAL_QA_0_8.md); background research is in
 [RESEARCH_REPORT_0_7.md](RESEARCH_REPORT_0_7.md).
 
@@ -28,7 +28,7 @@ logic from the still-pending live-service/packaged-installer runs. Previous visu
 | [METADATA_AND_ARTWORK.md](METADATA_AND_ARTWORK.md) | Active metadata/artwork sources and pipeline |
 | [DEPENDENCY_MATRIX.md](DEPENDENCY_MATRIX.md) | Toolchain, libraries, services, licence flags |
 | [ACCOUNT_SYNC.md](ACCOUNT_SYNC.md) | Supabase setup, account/session security, sync cycle, conflicts, tests, pending live E2E |
-| [AUTOMATIC_UPDATES.md](AUTOMATIC_UPDATES.md) | Update manifest, security, Windows handoff, release workflow, MSIX investigation, pending real install |
+| [AUTOMATIC_UPDATES.md](AUTOMATIC_UPDATES.md) | Automatic release versioning, update manifest, security, Inno EXE handoff, CI upgrade test |
 | [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) | Local and cloud tables, indexes, migrations, retention, sync bookkeeping |
 | [LICENSE_AND_COMPLIANCE.md](LICENSE_AND_COMPLIANCE.md) | GPL analysis, service terms, privacy, prohibited behaviour |
 | [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) | Current stage status and exit criteria |
@@ -54,7 +54,8 @@ recent-playlist recency, miniplayer and right sidebar with history timestamps. Y
 is primary, with MusicBrainz/CAA and Deezer fallbacks implemented. Supabase accounts and multi-device
 sync are implemented on the client with a
 versioned RLS migration and mocked two-device tests; a real Supabase project run is still pending.
-Automatic update checks, HTTPS/SHA-256/Authenticode verification and the GitHub release workflow are
-implemented; a real signed MSI upgrade is still pending. Last.fm, ListenBrainz, Spotify import,
-Canvas and animated artwork, recognition, device selection and packaging remain unsupported or in
-progress.
+Every push to `main` automatically tests, builds the Inno EXE, validates a clean install and a real
+upgrade from the previous release, then tags and publishes; installed builds update through the same
+verified EXE path. Code signing remains pending, so the release opts in to SHA-256-only verification.
+Last.fm, ListenBrainz, Spotify import, Canvas and animated artwork, recognition and device selection
+remain unsupported or in progress.

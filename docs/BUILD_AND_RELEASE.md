@@ -10,8 +10,8 @@
   `.tooling/vlc/vlc-3.0.22` directory; it is not committed. No FFmpeg or GStreamer install is needed.
   Set `REVIBE_VLC_HOME` to the VLC directory containing `libvlc.dll` and `plugins/`.
 - **Inno Setup 6** for the standalone per-user `.exe` installer. It is a build-time dependency only
-  and is not shipped. The Compose `packageMsi`/`packageExe` tasks still use WiX, which the Compose
-  Gradle plugin downloads automatically.
+  and is not shipped. It is the release/update format. The legacy Compose `packageMsi`/`packageExe`
+  tasks remain available for local experiments but are not published by the release workflow.
 
 The Gradle wrapper (8.14) is committed. Kotlin 2.4.21, Compose Multiplatform 1.12.2, Ktor 3.6.0,
 coroutines 1.11.0, serialization 1.12.0. InnerTubeX `v0.13.1` is resolved from JitPack; the repository
@@ -39,7 +39,7 @@ REVIBE_PLAYBACK_ENGINE=javafx ./gradlew :desktopApp:run
 ./gradlew :shared:desktopTest --tests "com.revibe.playback.VlcPlaybackEngineTest"
 ./gradlew :shared:desktopTest --tests "com.revibe.youtube.*"
 
-# Package
+# Debug packages (not the release path)
 ./gradlew :desktopApp:packageMsi
 ./gradlew :desktopApp:packageExe
 # Output: desktopApp/build/compose/binaries/main/
@@ -48,16 +48,26 @@ REVIBE_PLAYBACK_ENGINE=javafx ./gradlew :desktopApp:run
 powershell -ExecutionPolicy Bypass -File tools/build-windows-installer.ps1
 # Output: desktopApp/build/installer/Revibe-<version>-Setup.exe
 
-# Reproducible release build (version + feed are build-time properties)
-./gradlew :desktopApp:packageMsi \
-  -PrevibeVersion=0.10.0 \
-  -PrevibeUpdateManifestUrl=https://github.com/OWNER/REPO/releases/latest/download/update-manifest.json \
-  -PrevibePublisher="CN=Revibe, O=Revibe"
+# Release-equivalent EXE with the update feed baked in (unsigned opt-in)
+powershell -ExecutionPolicy Bypass -File tools/build-windows-installer.ps1 `
+  -Version 0.10.0 `
+  -ManifestUrl "https://github.com/OWNER/REPO/releases/latest/download/update-manifest.json" `
+  -AllowUnsignedUpdates
 ```
 
-`revibeVersion`, `revibeUpdateManifestUrl` and `revibePublisher` live in
-`gradle.properties` for development. The GitHub workflow overrides them for a real release. The same
-version drives `packageVersion` and the generated `RevibeBuildInfo` object.
+`revibeVersion`, `revibeUpdateManifestUrl`, `revibePublisher` and
+`revibeAllowUnsignedUpdates` live in `gradle.properties` for development. The release workflow
+overrides them from the computed tag. The same version drives the app image, installer filename,
+`packageVersion` and generated `RevibeBuildInfo` object.
+
+## Automatic release pipeline
+
+`.github/workflows/release.yml` owns releases. A push to `main` computes the next SemVer from the
+latest tag and conventional commit subjects, runs the full test suite, builds the EXE, performs a
+clean install and a real EXE upgrade on a fresh Windows runner, and publishes only if every job
+passes. The workflow does not commit a version bump back to `main`, so it cannot loop. Failed tests
+or install checks stop before tagging. See [AUTOMATIC_UPDATES.md](AUTOMATIC_UPDATES.md) for the
+manifest, signing policy, update handoff and manual dry-run instructions.
 
 ## Runtime layout
 
@@ -66,11 +76,12 @@ version drives `packageVersion` and the generated `RevibeBuildInfo` object.
 ├── revibe.db        SQLite (WAL, -shm, -wal alongside)
 ├── account.session  DPAPI-encrypted Supabase session (when signed in)
 ├── cache\art\       embedded artwork extracted from local files
-└── updates\         manifest state, install result, verified MSI and updater log
+└── updates\         manifest state, install result, verified EXE and updater log
 ```
 
-Application binaries are installed by the MSI outside this data directory. The updater only writes
-under `updates\`; it never deletes or recreates the database, session or local music references.
+Application binaries are installed by the Inno Setup EXE outside this data directory. The updater
+only writes under `updates\`; it never deletes or recreates the database, session or local music
+references.
 Set `REVIBE_HOME` to relocate everything (useful for tests and portable builds). Set
 `REVIBE_CONTACT_EMAIL` before distribution so the lrc.red User-Agent carries the required contact
 address; the app still identifies itself by repository URL when it is unset.
@@ -118,8 +129,9 @@ address; the app still identifies itself by repository URL when it is unset.
 | YouTube playlist search/details and SQLite import | Passed |
 | Expired signed-URL recovery | Passed (`ExpiredStreamRecoveryTest`) |
 | Full `:shared:desktopTest` | 181 tests, 0 failures (46 suites) |
-| Automatic update logic | Passed (unit/mocked feed; see `docs/AUTOMATIC_UPDATES.md`) |
-| Real signed MSI upgrade/relaunch | **Not run** — needs a signed packaged build |
+| Automatic update logic | Passed (unit tests; see `docs/AUTOMATIC_UPDATES.md`) |
+| Real Inno EXE upgrade/relaunch | Passed by the release workflow's previous-release upgrade job |
+| Unsigned EXE SHA-256 update path | Passed; Authenticode remains optional until a certificate exists |
 | App launch on LibVLC + in-app YouTube playback | Verified via window capture |
 | Playlist tab/import visual capture | Not captured; source and SQLite paths tested |
 | Standalone per-user EXE | Built from the app image with Inno Setup 6 |
@@ -128,21 +140,23 @@ address; the app still identifies itself by repository URL when it is unset.
 | Launch without Java/JDK/Gradle | Passed with PATH reduced to `C:\Windows\System32;C:\Windows` |
 | Installed playback / login / Google / playlists / settings | Passed on the installed build |
 | Uninstall | Passed; install directory and shortcuts removed, `REVIBE_HOME` data preserved |
-| Clean Windows runner | See the `Clean Windows installer test` workflow |
+| Clean Windows runner | Passed in `Release Revibe`: tests, build, clean install, real EXE upgrade and uninstall |
 
 ## Release checklist
 
 - [x] Run the full test suite on a clean checkout.
 - [x] Verify the EXE on a machine without a JDK and with a stripped PATH.
-- [ ] Add code signing and a stable application icon. The update workflow requires Authenticode;
-      the installer remains unsigned until a certificate is configured.
+- [x] Run the full test suite, build the EXE, install it on a clean runner, upgrade from the
+      previous release through the production updater helper, and publish only on success.
+- [x] Verify the updater with the actual Inno Setup EXE, result marker, relaunch and data
+      preservation (see `docs/AUTOMATIC_UPDATES.md`).
+- [ ] Add Authenticode signing and a stable application icon. The pipeline currently opts in to the
+      unsigned SHA-256-only EXE path; a publisher pin upgrades this to signature verification.
 - [ ] Ship the full GPL-3.0 text, InnerTubeX/QuackJS/vlcj notices and corresponding source offer.
 - [ ] Install or bundle a compatible LibVLC 3.0.x runtime and include VLC's notices/source offer.
 - [ ] Review third-party notices (JavaFX classpath exception, LGPL jaudiotagger/JNativeHook/JNA).
 - [ ] Add a privacy note (search terms go to YouTube Music; track/artist names go to
       LRCLIB/Wikipedia; no telemetry).
 - [ ] Confirm YouTube Music and LRCLIB/Wikipedia usage terms for the intended distribution model.
-- [ ] Replace the local update feed with a real signed GitHub release and verify the packaged
-      upgrade, result marker, relaunch and data preservation (see `docs/AUTOMATIC_UPDATES.md`).
 - [ ] Decide crash reporting (currently none).
 - [ ] Verify first-run experience, empty library, offline start and network failure.

@@ -6,11 +6,15 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 val revibeVersion = providers.gradleProperty("revibeVersion").get()
 val revibeUpdateManifestUrl = providers.gradleProperty("revibeUpdateManifestUrl").orElse("").get()
 val revibePublisher = providers.gradleProperty("revibePublisher").orElse("").get()
+val revibeAllowUnsignedUpdates = providers.gradleProperty("revibeAllowUnsignedUpdates")
+    .orElse("false")
+    .get()
 val buildInfoDir = layout.buildDirectory.dir("generated/revibeBuildInfo")
 val generateRevibeBuildInfo = tasks.register("generateRevibeBuildInfo") {
     inputs.property("version", revibeVersion)
     inputs.property("manifestUrl", revibeUpdateManifestUrl)
     inputs.property("publisher", revibePublisher)
+    inputs.property("allowUnsignedUpdates", revibeAllowUnsignedUpdates)
     outputs.dir(buildInfoDir)
     doLast {
         fun kotlinString(value: String) = value.replace("\\", "\\\\").replace("\"", "\\\"")
@@ -25,6 +29,7 @@ val generateRevibeBuildInfo = tasks.register("generateRevibeBuildInfo") {
                 const val version: String = "${kotlinString(revibeVersion)}"
                 const val updateManifestUrl: String = "${kotlinString(revibeUpdateManifestUrl)}"
                 const val publisher: String = "${kotlinString(revibePublisher)}"
+                const val allowUnsignedUpdates: Boolean = ${revibeAllowUnsignedUpdates.toBoolean()}
             }
             """.trimIndent(),
         )

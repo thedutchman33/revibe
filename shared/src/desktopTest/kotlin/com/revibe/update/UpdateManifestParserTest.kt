@@ -13,7 +13,7 @@ class UpdateManifestParserTest {
             {
               "latestVersion": "0.10.0",
               "minimumVersion": "0.9.0",
-              "downloadUrl": "https://github.com/revibe/revibe/releases/download/v0.10.0/Revibe-0.10.0.msi",
+              "downloadUrl": "https://github.com/revibe/revibe/releases/download/v0.10.0/Revibe-0.10.0-Setup.exe",
               "releaseNotes": "Faster sync\nUpdate checks",
               "mandatory": true,
               "sha256": "${"a".repeat(64)}",

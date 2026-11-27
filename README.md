@@ -61,15 +61,21 @@ project.
 
 ```bash
 ./gradlew :shared:desktopTest     # full suite, including live YouTube Music tests
-./gradlew :desktopApp:packageMsi  # signed-update MSI path
 powershell -File tools/build-windows-installer.ps1  # standalone per-user EXE
 ```
 
-Updates are configured at build time with `revibeVersion`, `revibeUpdateManifestUrl`
-and `revibePublisher` in `gradle.properties`, or the corresponding release workflow
-properties. A development build with no manifest URL disables update checks. The
-Windows install flow is documented in [docs/AUTOMATIC_UPDATES.md](docs/AUTOMATIC_UPDATES.md);
-a signed packaged upgrade has not yet been run.
+Every push to `main` is released automatically: the workflow runs the tests, builds
+`Revibe-<version>-Setup.exe`, verifies a clean install and a real upgrade from the previous release
+on a fresh Windows runner, then creates the tag and GitHub Release. The version is computed from the
+latest tag and conventional commit subjects; no version bump is committed back. See
+[docs/AUTOMATIC_UPDATES.md](docs/AUTOMATIC_UPDATES.md) and
+[docs/BUILD_AND_RELEASE.md](docs/BUILD_AND_RELEASE.md).
+
+Installed builds check `releases/latest/download/update-manifest.json`, download the EXE over HTTPS,
+verify its SHA-256 (and Authenticode when a publisher is pinned), then hand off to the silent Inno
+installer and relaunch. Accounts, playlists, settings and local data are preserved. Release builds
+currently opt in to the unsigned SHA-256-only path because no code-signing certificate is configured;
+`v0.9.0` must be replaced by the first EXE release manually because its updater only accepted MSI.
 
 ## What works
 
@@ -90,7 +96,7 @@ a signed packaged upgrade has not yet been run.
 | Dynamic home | **Implemented (first pass)** | Maturity from real activity; recent-playlist grid from real plays; provider-seeded personal mixes |
 | Artwork enrichment | **Implemented (artwork)** | YouTube Music primary; MusicBrainz/Cover Art Archive and Deezer fallback when the catalog has no cover |
 | Miniplayer | **Implemented** | Compact always-on-top window; same playback session; expand without interruption |
-| Automatic updates | **Implemented (unverified installer)** | HTTPS manifest, SHA-256, Authenticode publisher pin, separate MSI handoff; signed packaged upgrade pending |
+| Automatic updates | **Implemented** | Automatic GitHub Releases, HTTPS manifest, SHA-256, optional Authenticode pin, silent Inno EXE handoff, verified real upgrade |
 | Keyboard shortcuts | **Implemented** | Ctrl+F, Ctrl+Space, Ctrl+←/→, Ctrl+↑/↓, Ctrl+L, Esc |
 | Right contextual sidebar | **Implemented** | Now Playing, lyrics preview, About, credits, queue, recently played |
 | Liked, saved albums, followed artists, playlists, history | **Implemented** | SQLite, persisted |

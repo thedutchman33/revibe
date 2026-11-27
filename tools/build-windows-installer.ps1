@@ -1,5 +1,7 @@
 param(
     [string]$Version = "",
+    [string]$ManifestUrl = "",
+    [switch]$AllowUnsignedUpdates,
     [switch]$SkipGradle
 )
 
@@ -29,8 +31,17 @@ if (-not $iscc) {
 if (-not $SkipGradle) {
     Push-Location $root
     try {
-        & (Join-Path $root "gradlew.bat") :desktopApp:createDistributable `
-            "-PrevibeVersion=$Version" --console=plain
+        $gradleArgs = @(
+            ":desktopApp:createDistributable",
+            "-PrevibeVersion=$Version"
+        )
+        if (-not [string]::IsNullOrWhiteSpace($ManifestUrl)) {
+            $gradleArgs += "-PrevibeUpdateManifestUrl=$ManifestUrl"
+        }
+        if ($AllowUnsignedUpdates) {
+            $gradleArgs += "-PrevibeAllowUnsignedUpdates=true"
+        }
+        & (Join-Path $root "gradlew.bat") @gradleArgs --console=plain
         if ($LASTEXITCODE -ne 0) { throw "Gradle app-image build failed." }
     } finally {
         Pop-Location

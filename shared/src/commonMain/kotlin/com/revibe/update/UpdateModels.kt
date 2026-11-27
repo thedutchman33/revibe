@@ -80,6 +80,8 @@ data class UpdateConfig(
     val manifestUrl: String,
     val publisher: String,
     val updatesDirectory: String,
+    /** Allows the unsigned GitHub Actions EXE release when no Authenticode pin exists. */
+    val allowUnsignedInstaller: Boolean = false,
 )
 
 enum class PublisherStatus {

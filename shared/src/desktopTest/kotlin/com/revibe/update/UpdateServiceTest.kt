@@ -23,7 +23,7 @@ import kotlin.test.assertTrue
 class UpdateServiceTest {
     private val goodSha = "a".repeat(64)
     private val downloadUrl =
-        "https://github.com/revibe/revibe/releases/download/v0.10.0/Revibe-0.10.0.msi"
+        "https://github.com/revibe/revibe/releases/download/v0.10.0/Revibe-0.10.0-Setup.exe"
     private lateinit var tempDir: File
 
     @BeforeTest
@@ -157,6 +157,36 @@ class UpdateServiceTest {
     }
 
     @Test
+    fun `unsigned EXE update is allowed only when the build opts in`() = runTest {
+        val harness = harness(publisher = "", allowUnsigned = true)
+        assertTrue(harness.service.checkForUpdates(manual = true))
+
+        assertTrue(harness.service.installUpdate())
+        assertTrue(harness.installer.launched)
+        assertEquals(0, harness.verifier.calls)
+        assertEquals(0, harness.installer.discarded)
+    }
+
+    @Test
+    fun `unsigned EXE update is blocked without an explicit opt-in`() = runTest {
+        val harness = harness(publisher = "", allowUnsigned = false)
+        assertTrue(harness.service.checkForUpdates(manual = true))
+
+        assertFalse(harness.service.installUpdate())
+        assertEquals(UpdatePhase.ERROR, harness.service.state.value.phase)
+        assertTrue(harness.service.state.value.message.orEmpty().contains("Unsigned"))
+        assertFalse(harness.installer.launched)
+    }
+
+    @Test
+    fun `non installer download URLs are rejected before download`() = runTest {
+        val harness = harness(manifest = manifestJson(url = "https://example.test/Revibe.zip"))
+        assertFalse(harness.service.checkForUpdates(manual = true))
+        assertEquals(UpdatePhase.ERROR, harness.service.state.value.phase)
+        assertTrue(harness.service.state.value.message.orEmpty().contains("Windows EXE"))
+    }
+
+    @Test
     fun `invalid publisher discards installer`() = runTest {
         val harness = harness(verifierStatus = PublisherStatus.INVALID)
         assertTrue(harness.service.checkForUpdates(manual = true))
@@ -263,6 +293,8 @@ class UpdateServiceTest {
         downloader: UpdateDownloader = FakeDownloader(goodSha),
         verifierStatus: PublisherStatus = PublisherStatus.VALID,
         installerAccepted: Boolean = true,
+        publisher: String = "CN=Revibe, O=Revibe",
+        allowUnsigned: Boolean = false,
     ): Harness {
         val manifestClient = FakeManifestClient().apply { response = manifest }
         val hasher = FakeHasher(goodSha)
@@ -271,8 +303,9 @@ class UpdateServiceTest {
         val config = UpdateConfig(
             currentVersion = version,
             manifestUrl = manifestUrl,
-            publisher = "CN=Revibe, O=Revibe",
+            publisher = publisher,
             updatesDirectory = tempDir.absolutePath,
+            allowUnsignedInstaller = allowUnsigned,
         )
         val service = UpdateService(
             config = config,
@@ -287,7 +320,7 @@ class UpdateServiceTest {
             startupDelayMs = 0L,
             checkIntervalMs = 0L,
         )
-        return Harness(service, store, manifestClient, hasher, installer, downloader)
+        return Harness(service, store, manifestClient, hasher, installer, downloader, verifier)
     }
 
     private fun manifestJson(
@@ -315,6 +348,7 @@ class UpdateServiceTest {
         val hasher: FakeHasher,
         val installer: FakeInstaller,
         val downloader: UpdateDownloader,
+        val verifier: FakeVerifier,
     )
 
     private class FakeManifestClient : UpdateManifestClient {
@@ -366,8 +400,12 @@ class UpdateServiceTest {
     }
 
     private class FakeVerifier(private val status: PublisherStatus) : PublisherVerifier {
-        override suspend fun verify(path: String, expectedPublisher: String): PublisherCheck =
-            PublisherCheck(status, subject = "CN=Revibe, O=Revibe")
+        var calls = 0
+
+        override suspend fun verify(path: String, expectedPublisher: String): PublisherCheck {
+            calls++
+            return PublisherCheck(status, subject = "CN=Revibe, O=Revibe")
+        }
     }
 
     private class FakeInstaller(private val accepted: Boolean) : UpdateInstaller {

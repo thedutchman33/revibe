@@ -1,17 +1,15 @@
 # Release notes
 
-The Windows release workflow uses `release-notes/<version>.md` for both the
-GitHub release page and the `releaseNotes` field in `update-manifest.json`.
+Release notes are generated automatically by `.github/workflows/release.yml`
+from the non-merge commits since the previous `vX.Y.Z` tag. Features, fixes,
+performance changes and other changes are grouped into Markdown and used for
+both the GitHub Release body and the `releaseNotes` field in
+`update-manifest.json`.
 
-Example:
+No `release-notes/<version>.md` file is required for a release. Existing files
+in this directory are historical snapshots, including the manually written
+`0.9.0.md`.
 
-```text
-# Revibe 0.10.0
-
-- Update checks now run in the background.
-- Playlist sync reliability improvements.
-```
-
-Create a file named after the version without a leading `v` (for example
-`0.10.0.md`). If the file is absent, a manual workflow dispatch can provide
-fallback text. The workflow does not publish an unsigned MSI.
+The workflow also attaches the installer, `SHA256SUMS.txt` and
+`update-manifest.json`. It only publishes after the full test suite, clean
+install, and real previous-release EXE upgrade pass.
