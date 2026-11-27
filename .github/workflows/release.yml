@@ -24,9 +24,8 @@ on:
         description: "Release notes (used when release-notes/<version>.md is absent)"
         required: false
         type: string
-  push:
-    tags:
-      - "v*"
+  # Signed MSI releases are dispatched manually. The tested standalone EXE is
+  # published separately so a version tag does not start the MSI/signing job.
 
 permissions:
   contents: write
