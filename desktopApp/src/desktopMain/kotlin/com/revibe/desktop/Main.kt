@@ -48,8 +48,10 @@ import com.revibe.ui.theme.RevibeTheme
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.GraphicsEnvironment
+import java.awt.Image
 import java.awt.Rectangle
 import java.awt.Window
+import javax.imageio.ImageIO
 
 fun main() {
     val graph = createDesktopGraph()
@@ -111,6 +113,7 @@ fun main() {
             LaunchedEffect(Unit) {
                 window.minimumSize = Dimension(1120, 720)
                 window.background = java.awt.Color(8, 9, 10)
+                AppIcon.load()?.let { window.iconImage = it }
                 mediaKeys.install()
             }
             DisposableEffect(Unit) {
@@ -181,6 +184,7 @@ fun main() {
             ) {
                 LaunchedEffect(Unit) {
                     window.minimumSize = Dimension(356, 300)
+                    AppIcon.load()?.let { window.iconImage = it }
                 }
                 // The compact window is a separate composition, so it must provide the
                 // artwork loader and theme itself or Artwork throws on first frame.
@@ -227,6 +231,12 @@ private fun RowScope.WindowControls(
         tint = RevibeColors.TextSecondary,
         hoverTint = RevibeColors.Danger,
     )
+}
+
+private object AppIcon {
+    fun load(): Image? = runCatching {
+        AppIcon::class.java.getResourceAsStream("/revibe.png")?.use { ImageIO.read(it) }
+    }.getOrNull()
 }
 
 @Composable

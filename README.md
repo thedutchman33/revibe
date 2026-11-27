@@ -61,7 +61,8 @@ project.
 
 ```bash
 ./gradlew :shared:desktopTest     # full suite, including live YouTube Music tests
-powershell -File tools/build-windows-installer.ps1  # standalone per-user EXE
+powershell -File tools/build-windows-installer.ps1  # standalone per-user EXE, production update feed
+powershell -File tools/build-windows-installer.ps1 -DevelopmentBuild  # local-only, no update checks
 ```
 
 Every push to `main` is released automatically: the workflow runs the tests, builds
@@ -85,7 +86,7 @@ currently opt in to the unsigned SHA-256-only path because no code-signing certi
 | YouTube album / artist pages | **Implemented** | Artwork, metadata, track lists, discography, top songs |
 | YouTube playlist search / details | **Implemented** | Real playlist browse and track lists |
 | Playlist import | **Implemented** | Copies a YouTube playlist into a local SQLite-backed Revibe playlist |
-| YouTube full playback | **Implemented** | Progressive MP4/AAC resolved per play, played by LibVLC or JavaFX |
+| YouTube full playback | **Implemented** | Progressive MP4/AAC with next-track prefetch and a preloaded LibVLC player |
 | Native audio engine | **Implemented** | LibVLC 3.0.22 + vlcj 4.12.1; automatic JavaFX fallback |
 | Stream compatibility layer | **Implemented** | Loopback `.m4a` proxy forwards Range + headers; signed URLs stay out of the player |
 | Native Up Next / radio | **Implemented** | InnerTubeX `next()` + continuation, provider order preserved |
@@ -121,9 +122,9 @@ search / browse  ->  InnerTubeX (WEB_REMIX, anonymous session)
                          |
 playback         ->  InnerTubeExtractor (MP4/AAC first; progressive probe fallback)
                          |
-                    LocalStreamProxy (127.0.0.1, /stream.m4a, Range + headers)
+                    LocalStreamProxy (127.0.0.1, /stream/<token>.m4a, Range + headers)
                          |
-                    LibVLC (preferred) / JavaFX Media fallback
+                    LibVLC active + muted preloader (preferred) / JavaFX fallback
 
 native queue     ->  next(WEB_REMIX, videoId, playlistId = "RDAMVM<videoId>")
                          |
@@ -136,7 +137,12 @@ native queue     ->  next(WEB_REMIX, videoId, playlistId = "RDAMVM<videoId>")
   client (itag 18, muxed MP4/AAC) when needed. Formats neither engine can decode are surfaced with
   the actual MIME/codec, not dropped.
 - The loopback proxy gives JavaFX a real `.m4a` endpoint, forwards `Range` requests and extraction
-  headers, and keeps signed URLs out of the player.
+  headers, and keeps signed URLs out of the player. Each stream gets its own token, so warming the
+  next track cannot replace the bytes the current player is still reading.
+- The next queue row is resolved in the background and cached until shortly before URL expiry;
+  LibVLC opens it in a muted spare player. Next swaps to that player instead of starting extraction
+  and native initialization from scratch. Clicking during a prefetch shares the same in-flight
+  request, and superseded Next/Previous loads are cancelled.
 - Stream URLs are cached briefly and re-resolved once if playback fails, because signed URLs expire.
 - The queue is YouTube Music's: rows are appended in provider order, then the continuation page,
   with no local scoring or artist substitution.

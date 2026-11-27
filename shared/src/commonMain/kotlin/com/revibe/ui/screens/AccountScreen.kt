@@ -32,7 +32,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudOff
-import androidx.compose.material.icons.rounded.CloudUpload
+import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Logout
@@ -281,7 +281,7 @@ private fun ImportSection(vm: AppViewModel) {
             Text("Import your music", style = RevibeType.heading.copy(fontSize = 20.sp), color = RevibeColors.TextPrimary)
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                RevibeButton("Import from Spotify", vm::beginSpotifyImport, icon = Icons.Rounded.CloudUpload)
+                RevibeButton("Import from Spotify", vm::beginSpotifyImport, icon = Icons.Rounded.FileUpload)
                 RevibeButton("Import a playlist file", vm::beginPlaylistImport, kind = ButtonKind.Outline)
             }
         }

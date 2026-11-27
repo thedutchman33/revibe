@@ -2,10 +2,10 @@
 ; Build the app image first:
 ;   ./gradlew :desktopApp:createDistributable
 ; Then compile with:
-;   ISCC.exe /DAppVersion=0.9.0 Revibe.iss
+;   ISCC.exe /DAppVersion=0.10.0 Revibe.iss
 
 #ifndef AppVersion
-  #define AppVersion "0.9.0"
+  #define AppVersion "0.10.0"
 #endif
 
 #ifndef SourceDir
@@ -40,6 +40,7 @@ OutputBaseFilename={#OutputBaseFilename}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\icons\revibe.ico
 UninstallDisplayName=Revibe
 UninstallDisplayIcon={app}\Revibe.exe
 CloseApplications=yes

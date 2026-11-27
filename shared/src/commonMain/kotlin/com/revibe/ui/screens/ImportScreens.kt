@@ -22,7 +22,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.CloudUpload
+import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Language
@@ -179,7 +179,7 @@ fun PlaylistImportScreen(vm: AppViewModel) {
                         text = "Add playlist to Revibe",
                         onClick = vm::confirmPlaylistImport,
                         enabled = !vm.playlistImportBusy && preview.selectedCount > 0,
-                        icon = Icons.Rounded.CloudUpload,
+                        icon = Icons.Rounded.FileUpload,
                         modifier = Modifier.fillMaxWidth(),
                         centered = true,
                     )
@@ -313,7 +313,7 @@ internal fun PlaylistImportSummaryCard(
 ) {
     ImportCard("Playlist added") {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(Icons.Rounded.CloudUpload, null, tint = RevibeColors.Accent, modifier = Modifier.size(22.dp))
+            Icon(Icons.Rounded.FileUpload, null, tint = RevibeColors.Accent, modifier = Modifier.size(22.dp))
             Text(
                 summary.playlistName ?: "Imported playlist",
                 style = RevibeType.heading.copy(fontSize = 20.sp),
@@ -404,7 +404,7 @@ fun SpotifyImportScreen(vm: AppViewModel) {
                             if (vm.spotifyImportBusy) "Reading…" else "Upload Spotify ZIP",
                             vm::chooseSpotifyArchive,
                             enabled = !vm.spotifyImportBusy,
-                            icon = Icons.Rounded.CloudUpload,
+                            icon = Icons.Rounded.FileUpload,
                         )
                     }
                 }
@@ -531,7 +531,7 @@ fun SpotifyImportScreen(vm: AppViewModel) {
                         if (vm.spotifyImportBusy) "Importing…" else "Start import",
                         vm::confirmSpotifyImport,
                         enabled = !vm.spotifyImportBusy,
-                        icon = Icons.Rounded.CloudUpload,
+                        icon = Icons.Rounded.FileUpload,
                     )
                     RevibeButton("Choose another ZIP", vm::chooseSpotifyArchive, kind = ButtonKind.Outline, enabled = !vm.spotifyImportBusy)
                     RevibeButton("Cancel", vm::leaveImportScreens, kind = ButtonKind.Ghost)

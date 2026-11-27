@@ -14,15 +14,16 @@ itself to an EXE release.
 
 ## Versioning and releases
 
-The Git tag is the released version. `gradle.properties` keeps `0.9.0` as the
+The Git tag is the released version. `gradle.properties` keeps `0.10.0` as the
 development default, while CI passes the computed version into Gradle at build
-time:
+time. Local installer builds default to the production feed and the unsigned
+SHA-256 policy, so an installed EXE does not report itself as a development
+build. Use `-DevelopmentBuild` when a local installer must stay offline:
 
 ```powershell
-powershell -File tools/build-windows-installer.ps1 `
-  -Version 0.10.0 `
-  -ManifestUrl "https://github.com/thedutchman33/revibe/releases/latest/download/update-manifest.json" `
-  -AllowUnsignedUpdates
+powershell -File tools/build-windows-installer.ps1 -Version 0.10.1
+# Offline/local-only installer:
+powershell -File tools/build-windows-installer.ps1 -Version 0.10.1 -DevelopmentBuild
 ```
 
 Every push to `main` runs `.github/workflows/release.yml`. The workflow:
@@ -32,7 +33,7 @@ Every push to `main` runs `.github/workflows/release.yml`. The workflow:
    - `feat:` → minor (`0.9.0` → `0.10.0`);
    - `fix:`, `perf:`, `docs:`, `ci:` or any other conventional type → patch;
    - `type!:` or `BREAKING CHANGE` → minor while on `0.x`, major from `1.0.0`;
-3. runs the 181 deterministic desktop tests on Windows with VLC installed. The four
+3. runs the deterministic desktop tests on Windows with VLC installed. The four
    live YouTube transport checks are opt-in (`include_live_tests`) because GitHub's
    datacenter IPs are currently served SABR-only responses;
 4. builds the app image and `Revibe-<version>-Setup.exe` with the update feed

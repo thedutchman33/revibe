@@ -9,6 +9,13 @@ import com.revibe.model.Track
 interface PlaybackEngine {
     fun setListener(listener: Listener)
     fun load(uri: String, autoPlay: Boolean)
+
+    /**
+     * Optional best-effort warm-up of a resolved URI. Engines that cannot keep
+     * a second decoder alive simply ignore it; [load] must still work alone.
+     */
+    fun preload(uri: String) = Unit
+
     fun play()
     fun pause()
     fun seekTo(positionMs: Long)

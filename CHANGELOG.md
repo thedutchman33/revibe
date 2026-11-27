@@ -4,6 +4,9 @@
 
 ### Added
 
+- Next-track prefetch, an expiry-aware signed-URL cache, and a persistent LibVLC preloader. The
+  queue warms the following row in the background, shares that request with a click, and swaps to a
+  muted preloaded player on Next instead of rebuilding the engine.
 - Push-to-main release pipeline. Each push computes the next SemVer from the latest tag and
   conventional commit subjects, runs the full suite, builds the Inno Setup EXE, verifies a clean
   install and a real upgrade from the previous GitHub release on a fresh Windows runner, then creates
@@ -26,6 +29,11 @@
 
 ### Fixed
 
+- Seek bar presses and drags seek immediately instead of competing with the tap gesture.
+- Rapid Next/Previous no longer leaves superseded loads racing the selected track.
+- The installer gets a real Revibe icon for the EXE, shortcuts and taskbar, and local installer
+  builds default to the production update feed instead of reporting a development build.
+- The cloud-import glyph uses an upright upload icon.
 - Update UI copy no longer promises Windows Installer-specific progress when an Inno EXE is used.
 
 ## [0.9.0] - 2026-11-26
@@ -202,7 +210,7 @@
   playback catalog is YouTube Music; no Apple catalog, preview, search or artwork integration remains.
 - Artwork and provider docs now list active sources separately from Canvas, Apple Music motion
   artwork, Tidal and community Canvas, which remain unsupported.
-- Full desktop suite: **181 tests, 0 failures (46 suites)** on 27 November 2026.
+- Full desktop suite: **184 tests, 0 failures (46 suites)** on 27 November 2026.
 
 ### Historical (0.4 shell work)
 

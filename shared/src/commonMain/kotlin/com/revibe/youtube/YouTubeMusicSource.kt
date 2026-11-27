@@ -25,6 +25,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -92,9 +93,12 @@ class YouTubeMusicSource(
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val initMutex = Mutex()
     private val cacheMutex = Mutex()
+    private val resolveMutex = Mutex()
     private var tube: InnerTube? = null
     private var extractor: InnerTubeExtractor? = null
-    private val streamCache = mutableMapOf<String, CachedStream>()
+    private val streamCache = LinkedHashMap<String, CachedStream>(32, 0.75f, true)
+    /** Shared extraction work: prefetch and a click must never duplicate a request. */
+    private val inFlight = mutableMapOf<String, CompletableDeferred<YouTubeStream>>()
 
     private val _status = MutableStateFlow(YouTubeAvailability.INITIALIZING)
     val status: StateFlow<YouTubeAvailability> = _status.asStateFlow()
@@ -103,7 +107,7 @@ class YouTubeMusicSource(
     val diagnostic: StateFlow<String> = _diagnostic.asStateFlow()
 
 
-    private data class CachedStream(val stream: YouTubeStream, val cachedAtMs: Long, val ttlMs: Long)
+    private data class CachedStream(val stream: YouTubeStream, val validUntilMs: Long)
 
     // ------------------------------------------------------------------ search
 
@@ -332,13 +336,45 @@ class YouTubeMusicSource(
         val videoId = track.id.removePrefix("${idPrefix}track:")
         require(videoId.isNotBlank()) { "Catalog track has no video id" }
 
-        val now = System.currentTimeMillis()
         if (!forceRefresh) {
-            cacheMutex.withLock {
-                streamCache[videoId]?.takeIf { now - it.cachedAtMs < it.ttlMs }?.let { return it.stream }
-            }
+            cachedStream(videoId)?.let { return it }
+        } else {
+            cacheMutex.withLock { streamCache.remove(videoId) }
         }
 
+        // Prefetch and an immediate click share one extraction. Without this,
+        // clicking Next while the prefetch is still running starts a second
+        // player request for exactly the same video.
+        val pending = CompletableDeferred<YouTubeStream>()
+        var joined: CompletableDeferred<YouTubeStream>? = null
+        val leader = resolveMutex.withLock {
+            val existing = inFlight[videoId]
+            if (existing == null) {
+                inFlight[videoId] = pending
+                true
+            } else {
+                joined = existing
+                false
+            }
+        }
+        if (!leader) return joined!!.await()
+
+        try {
+            val resolved = extractCompatibleStream(track, videoId)
+            rememberStream(videoId, resolved)
+            pending.complete(resolved)
+            return resolved
+        } catch (error: Throwable) {
+            pending.completeExceptionally(error)
+            throw error
+        } finally {
+            resolveMutex.withLock {
+                if (inFlight[videoId] === pending) inFlight.remove(videoId)
+            }
+        }
+    }
+
+    private suspend fun extractCompatibleStream(track: Track, videoId: String): YouTubeStream {
         val extraction = ensureExtractor()
         val autoHints = ContentHints(
             isExplicit = track.explicit,
@@ -373,7 +409,8 @@ class YouTubeMusicSource(
             try {
                 val stream = extraction.extract(videoId, attempt.hints, audioQuality = attempt.quality) ?: continue
                 if (isJavaFxCompatible(stream)) {
-                    val resolved = YouTubeStream(
+                    setStatus(YouTubeAvailability.AVAILABLE, "${attempt.label} stream ready · itag ${stream.itag}")
+                    return YouTubeStream(
                         url = stream.audioUrl,
                         headers = stream.headers,
                         mimeType = stream.mimeType,
@@ -387,16 +424,6 @@ class YouTubeMusicSource(
                             "Online catalog · progressive MP4/AAC"
                         },
                     )
-                    val ttl = (resolved.expiresAtEpochMs ?: (now + 240_000))
-                        .minus(now)
-                        .minus(45_000)
-                        .coerceIn(30_000, 240_000)
-                    cacheMutex.withLock {
-                        if (streamCache.size > 24) streamCache.clear()
-                        streamCache[videoId] = CachedStream(resolved, now, ttl)
-                    }
-                    setStatus(YouTubeAvailability.AVAILABLE, "${attempt.label} stream ready · itag ${stream.itag}")
-                    return resolved
                 }
                 incompatible = stream
                 setStatus(
@@ -449,6 +476,36 @@ class YouTubeMusicSource(
             },
             lastFailure,
         )
+    }
+
+    private suspend fun cachedStream(videoId: String): YouTubeStream? = cacheMutex.withLock {
+        val cached = streamCache[videoId]
+        if (cached == null) return@withLock null
+        if (System.currentTimeMillis() >= cached.validUntilMs) {
+            streamCache.remove(videoId)
+            return@withLock null
+        }
+        cached.stream
+    }
+
+    private suspend fun rememberStream(videoId: String, stream: YouTubeStream) {
+        val now = System.currentTimeMillis()
+        val validUntil = stream.expiresAtEpochMs
+            ?.minus(STREAM_EXPIRY_SAFETY_MS)
+            ?: (now + DEFAULT_STREAM_TTL_MS)
+        if (validUntil <= now) return
+        cacheMutex.withLock {
+            streamCache.remove(videoId)
+            streamCache[videoId] = CachedStream(stream, validUntil)
+            if (streamCache.size > MAX_STREAM_CACHE) {
+                streamCache.entries.firstOrNull { it.value.validUntilMs <= now }?.let {
+                    streamCache.remove(it.key)
+                }
+            }
+            while (streamCache.size > MAX_STREAM_CACHE) {
+                streamCache.keys.firstOrNull()?.let(streamCache::remove)
+            }
+        }
     }
 
     // ------------------------------------------------------------------- infra
@@ -900,6 +957,9 @@ class YouTubeMusicSource(
     }
 
     companion object {
+        private const val MAX_STREAM_CACHE = 64
+        private const val STREAM_EXPIRY_SAFETY_MS = 30_000L
+        private const val DEFAULT_STREAM_TTL_MS = 10L * 60L * 1_000L
         private val HEADER_TYPE_WORDS = setOf("album", "single", "ep", "playlist", "song", "video")
 
         private const val SONG_PARAMS = "EgWKAQIIAWoKEAkQBRAKEAMQBA=="

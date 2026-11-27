@@ -6,14 +6,19 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * JavaFX Media chooses its demuxer from the URL/response. Signed googlevideo
  * audio URLs have no file extension, so an audio-only MP4 is rejected even
- * though the bytes are valid. This loopback proxy exposes the current stream as
- * `/stream.m4a`, forwards Range requests and the resolver's headers, and keeps
- * the signed URL out of the player. It only accepts loopback connections.
+ * though the bytes are valid. This loopback proxy exposes each stream as a
+ * distinct `/stream/<id>.m4a`, forwards Range requests and the resolver's
+ * headers, and keeps the signed URL out of the player.
+ *
+ * The proxy holds multiple sources on purpose: warming the next queue row must
+ * never overwrite the URL backing the track currently being decoded.
  */
 class LocalStreamProxy : AutoCloseable {
     private data class Source(
@@ -22,8 +27,8 @@ class LocalStreamProxy : AutoCloseable {
         val contentType: String,
     )
 
-    @Volatile
-    private var source: Source? = null
+    private val sources = ConcurrentHashMap<String, Source>()
+    private val sequence = AtomicLong()
 
     private val executor = Executors.newCachedThreadPool { runnable ->
         Thread(runnable, "revibe-stream-proxy").apply { isDaemon = true }
@@ -39,18 +44,27 @@ class LocalStreamProxy : AutoCloseable {
     }
 
     fun expose(url: String, headers: Map<String, String>, mimeType: String?): String {
-        source = Source(
+        val id = sequence.incrementAndGet().toString(36)
+        sources[id] = Source(
             url = url,
             headers = headers.filterKeys { it.isNotBlank() && !it.equals("Host", ignoreCase = true) },
             contentType = mimeType?.takeIf { it.contains("mp4", ignoreCase = true) } ?: "audio/mp4",
         )
-        return "http://127.0.0.1:${server.address.port}/stream.m4a"
+        // Queue prefetch is bounded; this only prevents a long session from
+        // retaining every historical token. The active/next sources are tiny.
+        while (sources.size > MAX_SOURCES) {
+            sources.keys.firstOrNull()?.let(sources::remove)
+        }
+        return "http://127.0.0.1:${server.address.port}/stream/$id.m4a"
     }
 
     private fun handle(exchange: HttpExchange) {
-        val current = source
+        val id = exchange.requestURI.path
+            .substringAfterLast('/', "")
+            .substringBefore('.')
+        val current = sources[id]
         if (current == null) {
-            exchange.sendResponseHeaders(503, 0)
+            exchange.sendResponseHeaders(404, 0)
             exchange.close()
             return
         }
@@ -90,7 +104,12 @@ class LocalStreamProxy : AutoCloseable {
     }
 
     override fun close() {
+        sources.clear()
         runCatching { server.stop(0) }
         runCatching { executor.shutdownNow() }
+    }
+
+    private companion object {
+        const val MAX_SOURCES = 32
     }
 }

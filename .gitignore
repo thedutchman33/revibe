@@ -9,6 +9,8 @@ dev-fixtures/
 *.png
 *.jpg
 !docs/**/*.png
+!desktopApp/icons/*.png
+!desktopApp/src/desktopMain/resources/revibe.png
 local.properties
 .idea/
 .kotlin/

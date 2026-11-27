@@ -56,11 +56,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.revibe.ui.theme.RevibeColors
 import com.revibe.ui.theme.RevibeType
-import kotlinx.coroutines.coroutineScope
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
-import kotlinx.coroutines.launch
 
 @Composable
 fun HoverSurface(
@@ -358,25 +356,27 @@ fun SeekBar(
             .pointerHoverIcon(PointerIcon.Hand)
             .pointerInput(enabled) {
                 if (!enabled) return@pointerInput
-                coroutineScope {
-                    launch {
-                        detectHorizontalDragGestures(
-                            onDragStart = { offset ->
-                                dragging = true
-                                onChange((offset.x / size.width).coerceIn(0f, 1f))
-                            },
-                            onDragEnd = { dragging = false },
-                            onDragCancel = { dragging = false },
-                            onHorizontalDrag = { change, _ ->
-                                onChange((change.position.x / size.width).coerceIn(0f, 1f))
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    fun fraction(x: Float) = (x / size.width).coerceIn(0f, 1f)
+                    dragging = true
+                    try {
+                        // Seek on press, then keep seeking for the whole drag. A
+                        // single gesture detector avoids the tap/drag competition
+                        // that made quick progress-bar clicks feel unresponsive.
+                        onChange(fraction(down.position.x))
+                        down.consume()
+                        var change = down
+                        while (change.pressed) {
+                            val event = awaitPointerEvent()
+                            change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.pressed) {
+                                onChange(fraction(change.position.x))
                                 change.consume()
-                            },
-                        )
-                    }
-                    launch {
-                        detectTapGestures { offset ->
-                            onChange((offset.x / size.width).coerceIn(0f, 1f))
+                            }
                         }
+                    } finally {
+                        dragging = false
                     }
                 }
             },

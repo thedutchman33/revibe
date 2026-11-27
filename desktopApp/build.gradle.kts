@@ -41,6 +41,7 @@ compose.desktop {
             copyright = "Copyright 2026 Revibe"
             modules("java.sql", "java.naming", "jdk.httpserver", "jdk.unsupported")
             windows {
+                iconFile.set(project.file("icons/revibe.ico"))
                 menuGroup = "Revibe"
                 shortcut = true
                 dirChooser = true

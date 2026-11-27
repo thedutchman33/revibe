@@ -51,6 +51,9 @@ class PlayerController(
     private var completedEntryId: String? = null
     private var skipRecordedEntryId: String? = null
     private var refillJob: Job? = null
+    private var loadJob: Job? = null
+    private var prefetchJob: Job? = null
+    private var prefetchedEntryId: String? = null
     private var lastRefillEntryId: String? = null
     private var awaitingEndRefill = false
     private var nativeContinuation: String? = null
@@ -235,6 +238,7 @@ class PlayerController(
         }
         val index = current?.let { c -> entries.indexOfFirst { it.entryId == c.entryId } }?.takeIf { it >= 0 } ?: 0
         _state.update { it.copy(shuffle = shuffled, entries = entries, index = index) }
+        prefetchNext()
     }
 
     fun cycleRepeat() {
@@ -273,6 +277,8 @@ class PlayerController(
         _state.update { it.copy(entries = entries) }
         if (state.current == null) {
             playAt(entries.indexOfFirst { it.entryId == entryId })
+        } else {
+            prefetchNext()
         }
     }
 
@@ -290,7 +296,11 @@ class PlayerController(
         val sourceCurrent = currentEntryId?.let { id -> sourceEntries.indexOfFirst { it.entryId == id } } ?: -1
         sourceEntries = QueuePolicy.insertManual(sourceEntries, track, sourceCurrent, entryId, playNext = true)
         _state.update { it.copy(entries = entries) }
-        if (state.current == null) playAt(entries.indexOfFirst { it.entryId == entryId })
+        if (state.current == null) {
+            playAt(entries.indexOfFirst { it.entryId == entryId })
+        } else {
+            prefetchNext()
+        }
     }
 
     fun removeFromQueue(index: Int) {
@@ -313,6 +323,8 @@ class PlayerController(
             } else {
                 loadCurrent(autoPlay = true)
             }
+        } else {
+            prefetchNext()
         }
     }
 
@@ -330,6 +342,9 @@ class PlayerController(
     fun clearQueue() {
         contextGeneration++
         refillJob?.cancel()
+        loadJob?.cancel()
+        prefetchJob?.cancel()
+        prefetchedEntryId = null
         awaitingEndRefill = false
         sourceEntries = emptyList()
         engine.stop()
@@ -358,6 +373,8 @@ class PlayerController(
         loadGeneration++
         contextGeneration++
         refillJob?.cancel()
+        loadJob?.cancel()
+        prefetchJob?.cancel()
         engine.release()
     }
 
@@ -455,6 +472,7 @@ class PlayerController(
                         autoplayMessage = null,
                     )
                 }
+                prefetchNext()
                 if (awaitingEndRefill) {
                     awaitingEndRefill = false
                     val nextIndex = latest.index + 1
@@ -482,13 +500,19 @@ class PlayerController(
         val entry = state.entries.getOrNull(state.index) ?: return
         val track = entry.track
         val generation = ++loadGeneration
-        if (currentEntryId != entry.entryId) {
+        val changedEntry = currentEntryId != entry.entryId
+        if (changedEntry) {
             currentEntryId = entry.entryId
             retryUsedFor = null
             playRecordedEntryId = null
             completedEntryId = null
             skipRecordedEntryId = null
+            // Do not let the previous row keep sounding while a cold resolve is
+            // in flight. A prefetched row reaches engine.load almost immediately.
+            engine.stop()
         }
+        // A click supersedes any resolve that is still running for an older row.
+        loadJob?.cancel()
         _state.update {
             it.copy(
                 current = track,
@@ -498,7 +522,7 @@ class PlayerController(
                 error = null,
             )
         }
-        scope.launch {
+        loadJob = scope.launch {
             val resolved = if (track.needsResolution && resolver != null) {
                 resolver.resolve(track, forceRefresh)
             } else {
@@ -518,7 +542,42 @@ class PlayerController(
             }
             engine.load(uri, autoPlay)
         }
+        prefetchNext(protectedEntryId = entry.entryId)
         maybeRefill()
+    }
+
+    /**
+     * Resolves the next queue row while the current one plays. The resolver's
+     * cache and in-flight map make a click that arrives during this warm-up
+     * join the same request instead of starting another one.
+     */
+    private fun prefetchNext(force: Boolean = false, protectedEntryId: String? = null) {
+        val streamResolver = resolver ?: return
+        val state = _state.value
+        val next = state.entries.getOrNull(state.index + 1)
+        if (next == null || !next.track.needsResolution) {
+            // If the in-flight warm-up is for the row that just became current,
+            // keep it alive; loadCurrent's resolve is joined to that request.
+            if (prefetchedEntryId != protectedEntryId) {
+                prefetchJob?.cancel()
+                prefetchedEntryId = null
+            }
+            return
+        }
+        if (!force && prefetchedEntryId == next.entryId) return
+        // Never cancel a resolve that has just become the current row: a click
+        // arriving during prefetch joins that same in-flight request.
+        if (prefetchedEntryId != protectedEntryId) prefetchJob?.cancel()
+        prefetchedEntryId = next.entryId
+        val generation = contextGeneration
+        val nextEntryId = next.entryId
+        prefetchJob = scope.launch {
+            val result = runCatching { streamResolver.prefetch(next.track) }
+            if (generation != contextGeneration) return@launch
+            if (_state.value.entries.getOrNull(_state.value.index + 1)?.entryId != nextEntryId) return@launch
+            result.getOrNull()?.uri?.takeIf { it.isNotBlank() }?.let(engine::preload)
+            if (result.isFailure) prefetchedEntryId = null
+        }
     }
 
     private fun recordSkipIfNeeded(state: PlayerState, index: Int) {

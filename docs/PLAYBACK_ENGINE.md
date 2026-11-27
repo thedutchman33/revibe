@@ -6,6 +6,7 @@
 interface PlaybackEngine {
     fun setListener(listener: Listener)
     fun load(uri: String, autoPlay: Boolean)
+    fun preload(uri: String) = Unit
     fun play(); fun pause(); fun seekTo(ms: Long)
     fun setVolume(v: Float); fun stop(); fun release()
 
@@ -94,19 +95,38 @@ application and include its licence/notices.
 ```
 InnerTubeX extraction (MP4/AAC first, progressive fallback)
    -> direct signed audio/mp4 URL
-   -> LocalStreamProxy (127.0.0.1:<ephemeral>/stream.m4a, Range + headers)
-   -> LibVLC (or JavaFX fallback)
+   -> LocalStreamProxy per-stream token (Range + headers)
+   -> LibVLC active player + muted next-track preloader
 ```
 
 - InnerTubeX extraction still selects MP4/AAC for YouTube. The native engine broadens local formats
   and is ready for HLS/WebM if the resolver is extended, but YouTube HLS/WebM transport is not yet
   wired.
-- The loopback proxy keeps signed URLs and headers inside the desktop process and gives the engine a
-  stable local endpoint.
-- Resolution remains lazy and per-current-track.
+- The loopback proxy keeps signed URLs and headers inside the desktop process and gives each stream
+  its own stable endpoint. Preparing the next row can never replace the source backing the current
+  decoder.
+- The controller warms the next queue row as soon as a queue is loaded (and again after queue edits
+  or native refills). Resolution is deduplicated in-flight, cached until 30 seconds before the signed
+  URL expiry, and shared by prefetch and a click that arrives during it.
+- LibVLC keeps one active player and one muted preloader for the session. The preloader opens and
+  buffers the next URI; Next swaps players and resets the preloaded position. No native player is
+  recreated per track.
 - A playback error re-resolves the current YouTube track once before surfacing failure. This is
   covered by `ExpiredStreamRecoveryTest`.
 - Anonymous sessions only. Age-restricted content returns `AUTHENTICATION_REQUIRED`.
+
+### Measured transition latency
+
+Real InnerTubeX stream + LibVLC, `PlaybackLatencyProbe` (`REVIBE_LATENCY_PROBE=1`):
+
+| Path | Before | After |
+| --- | ---: | ---: |
+| First Play (cold extraction) | 1,758 ms | provider-bound; ~1.6–2.9 s measured |
+| Warm load of a cached URI | 98 ms | 51–97 ms |
+| Next with resolved cache only | 613 ms | 1–2 ms after preload swap |
+
+The first track still needs InnerTubeX's network extraction. Subsequent loads and Next transitions
+use the same resolved URI, a warm proxy and the preloaded decoder.
 
 ## Queue semantics
 
@@ -115,6 +135,8 @@ InnerTubeX extraction (MP4/AAC first, progressive fallback)
 - Repeat OFF / ALL / ONE cycles from the player bar; ONE replays on `onEnded`.
 - `next(auto)` at the end with repeat OFF stops; manual next does nothing when there is no next item.
 - `previous()` seeks to zero when position is over 3 s, otherwise moves back one track.
+- Rapid Next/Previous clicks cancel superseded resolves; only the latest generation may call the
+  engine. A click during a prefetch joins that request instead of cancelling it.
 - `addToQueue`, `playNext`, `removeFromQueue` and `moveInQueue` update both orders.
 - Every load records listening history in SQLite.
 - A missing source URL produces an explicit error, never a simulated progress bar.

@@ -98,7 +98,9 @@ class ArtworkResolverTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; isLenient = true }) }
             install(HttpTimeout) { requestTimeoutMillis = 20_000; connectTimeoutMillis = 10_000 }
         }
-        val provider = MusicBrainzArtworkProvider(client)
+        // The public MusicBrainz/CAA services occasionally need more than the
+        // production 8 s budget; this live check is about a real cover, not latency.
+        val provider = MusicBrainzArtworkProvider(client, timeoutMs = 20_000)
         val candidate = provider.artwork(
             ArtworkQuery(
                 artist = "Daft Punk",

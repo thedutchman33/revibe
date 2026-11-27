@@ -44,15 +44,13 @@ REVIBE_PLAYBACK_ENGINE=javafx ./gradlew :desktopApp:run
 ./gradlew :desktopApp:packageExe
 # Output: desktopApp/build/compose/binaries/main/
 
-# Standalone per-user EXE with Start Menu + desktop shortcuts
+# Standalone per-user EXE with Start Menu + desktop shortcuts.
+# Defaults to the production update feed and unsigned SHA-256 policy.
 powershell -ExecutionPolicy Bypass -File tools/build-windows-installer.ps1
 # Output: desktopApp/build/installer/Revibe-<version>-Setup.exe
 
-# Release-equivalent EXE with the update feed baked in (unsigned opt-in)
-powershell -ExecutionPolicy Bypass -File tools/build-windows-installer.ps1 `
-  -Version 0.10.0 `
-  -ManifestUrl "https://github.com/OWNER/REPO/releases/latest/download/update-manifest.json" `
-  -AllowUnsignedUpdates
+# Local-only installer without update checks
+powershell -ExecutionPolicy Bypass -File tools/build-windows-installer.ps1 -DevelopmentBuild
 ```
 
 `revibeVersion`, `revibeUpdateManifestUrl`, `revibePublisher` and

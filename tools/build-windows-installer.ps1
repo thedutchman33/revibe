@@ -1,7 +1,8 @@
 param(
     [string]$Version = "",
-    [string]$ManifestUrl = "",
+    [string]$ManifestUrl = "https://github.com/thedutchman33/revibe/releases/latest/download/update-manifest.json",
     [switch]$AllowUnsignedUpdates,
+    [switch]$DevelopmentBuild,
     [switch]$SkipGradle
 )
 
@@ -35,10 +36,14 @@ if (-not $SkipGradle) {
             ":desktopApp:createDistributable",
             "-PrevibeVersion=$Version"
         )
-        if (-not [string]::IsNullOrWhiteSpace($ManifestUrl)) {
-            $gradleArgs += "-PrevibeUpdateManifestUrl=$ManifestUrl"
+        # A packaged installer defaults to production update checks. Local builds
+        # that must stay offline can opt out explicitly with -DevelopmentBuild.
+        $effectiveManifest = if ($DevelopmentBuild) { "" } else { $ManifestUrl }
+        $allowUnsigned = $AllowUnsignedUpdates -or (-not $DevelopmentBuild)
+        if (-not [string]::IsNullOrWhiteSpace($effectiveManifest)) {
+            $gradleArgs += "-PrevibeUpdateManifestUrl=$effectiveManifest"
         }
-        if ($AllowUnsignedUpdates) {
+        if ($allowUnsigned) {
             $gradleArgs += "-PrevibeAllowUnsignedUpdates=true"
         }
         & (Join-Path $root "gradlew.bat") @gradleArgs --console=plain
