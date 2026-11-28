@@ -1,54 +1,5 @@
 # Changelog
 
-## [0.11.1] - 2026-11-27
-
-### Changed
-
-- Replaced the LibVLC/vlcj desktop engine and the JavaFX fallback with one **FFmpeg 8.1.2** engine
-  through JavaCV 1.5.14. FFmpeg decodes at the stream's native sample rate/channels to signed 16-bit
-  PCM, written to Java Sound `SourceDataLine`. FFmpeg/JavaCPP Windows x64 natives ship inside the
-  installer; no VLC, JavaFX, GStreamer or external `ffmpeg.exe` is needed.
-- YouTube streams now open directly in FFmpeg with the resolver's HTTP headers. Signed URLs stay out
-  of the playback API/UI, and seeking no longer depends on a loopback range re-server.
-- Each player has one decode thread, one render thread, a 15-frame PCM queue and a 150 ms line buffer;
-  engine commands remain serialized so slow opens do not block Compose.
-- VideoLAN, vlcj and JavaFX code, dependencies and build steps were removed; `jna-platform` remains
-  only for DPAPI and the Windows AppUserModelID.
-
-### Added
-
-- Prepared next players decode three PCM frames while paused. Live preload-to-next audio measured
-  **2 ms**, and seeking to 45 s after a swap resumed in **5.3 s** with playback continuing past 47 s.
-- Exact decoder seeks: `setTimestamp` is validated by pulling the first frame, nearby byte boundaries
-  are retried on fresh connections, and a short landing is decoder-skipped forward to the requested
-  timestamp. Resume waits until the seek finishes.
-- Deterministic FFmpeg coverage for MP4/AAC, AAC/ADTS, MP3, WAV, FLAC, Ogg/Vorbis, WebM/Opus, forward
-  and backward seek, MP4 seek, pause/resume, end-of-track, near-end seek, prefetched seek, rapid
-  switching, long sessions and missing files; a live YouTube Music stream test; and a live preload
-  durability probe.
-- Installed-Windows acceptance: play, pause/resume, seeks at ~25/50/80/90%, next/previous, five rapid
-  Next clicks, end-of-track → prepared next, and 70+ seconds of sustained InnerTubeX playback.
-
-### Fixed
-
-- Pause no longer deadlocks resume when a render thread is parked in a stopped Java Sound line;
-  PCM writes are cancellable.
-- Seeking no longer restarts a track from zero; direct signed-stream transport and first-frame seek
-  validation replaced the unreliable proxy range path.
-- A full decode queue at EOF no longer strands the renderer at the last second; EOF waits for a slot
-  before marking completion.
-- Play pressed during a seek no longer starts stale PCM or races the seek clock.
-- Seek bar presses/drags and taskbar identity remain fixed from the unreleased queue work.
-
-### Known limitations
-
-- If a specific signed stream rejects every exact/nearby seek candidate, playback can surface an
-  error instead of guaranteeing an exact position; tested tracks sought within 30 ms.
-- There is no user-facing audio-quality selector; all installed checks used itag 140 at 44.1 kHz
-  stereo.
-- `revibeSupabaseUrl`/`revibeSupabaseAnonKey` remain blank in `gradle.properties`; installed builds
-  need the release secrets or environment variables for account sync.
-
 ## [1.0.0] - 2026-11-28
 
 ### Changed
@@ -110,6 +61,55 @@
   the crossbar with canonical arc order, and import uses a down-into-tray icon instead of an
   upload-style arrow.
 - Update UI copy no longer promises Windows Installer-specific progress when an Inno EXE is used.
+
+## [0.11.1] - 2026-11-27
+
+### Changed
+
+- Replaced the LibVLC/vlcj desktop engine and the JavaFX fallback with one **FFmpeg 8.1.2** engine
+  through JavaCV 1.5.14. FFmpeg decodes at the stream's native sample rate/channels to signed 16-bit
+  PCM, written to Java Sound `SourceDataLine`. FFmpeg/JavaCPP Windows x64 natives ship inside the
+  installer; no VLC, JavaFX, GStreamer or external `ffmpeg.exe` is needed.
+- YouTube streams now open directly in FFmpeg with the resolver's HTTP headers. Signed URLs stay out
+  of the playback API/UI, and seeking no longer depends on a loopback range re-server.
+- Each player has one decode thread, one render thread, a 15-frame PCM queue and a 150 ms line buffer;
+  engine commands remain serialized so slow opens do not block Compose.
+- VideoLAN, vlcj and JavaFX code, dependencies and build steps were removed; `jna-platform` remains
+  only for DPAPI and the Windows AppUserModelID.
+
+### Added
+
+- Prepared next players decode three PCM frames while paused. Live preload-to-next audio measured
+  **2 ms**, and seeking to 45 s after a swap resumed in **5.3 s** with playback continuing past 47 s.
+- Exact decoder seeks: `setTimestamp` is validated by pulling the first frame, nearby byte boundaries
+  are retried on fresh connections, and a short landing is decoder-skipped forward to the requested
+  timestamp. Resume waits until the seek finishes.
+- Deterministic FFmpeg coverage for MP4/AAC, AAC/ADTS, MP3, WAV, FLAC, Ogg/Vorbis, WebM/Opus, forward
+  and backward seek, MP4 seek, pause/resume, end-of-track, near-end seek, prefetched seek, rapid
+  switching, long sessions and missing files; a live YouTube Music stream test; and a live preload
+  durability probe.
+- Installed-Windows acceptance: play, pause/resume, seeks at ~25/50/80/90%, next/previous, five rapid
+  Next clicks, end-of-track → prepared next, and 70+ seconds of sustained InnerTubeX playback.
+
+### Fixed
+
+- Pause no longer deadlocks resume when a render thread is parked in a stopped Java Sound line;
+  PCM writes are cancellable.
+- Seeking no longer restarts a track from zero; direct signed-stream transport and first-frame seek
+  validation replaced the unreliable proxy range path.
+- A full decode queue at EOF no longer strands the renderer at the last second; EOF waits for a slot
+  before marking completion.
+- Play pressed during a seek no longer starts stale PCM or races the seek clock.
+- Seek bar presses/drags and taskbar identity remain fixed from the unreleased queue work.
+
+### Known limitations
+
+- If a specific signed stream rejects every exact/nearby seek candidate, playback can surface an
+  error instead of guaranteeing an exact position; tested tracks sought within 30 ms.
+- There is no user-facing audio-quality selector; all installed checks used itag 140 at 44.1 kHz
+  stereo.
+- `revibeSupabaseUrl`/`revibeSupabaseAnonKey` remain blank in `gradle.properties`; installed builds
+  need the release secrets or environment variables for account sync.
 
 ## [0.9.0] - 2026-11-26
 

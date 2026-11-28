@@ -86,8 +86,8 @@ remain planned.
   **itag 251 Opus, 48 kHz stereo** (installed log: 158,237 bps, 48,000 Hz, 2 channels). The
   restart-to-zero test first landed at 20.014 s, then the reopen retry landed at 14 ms in ~0.7 s,
   reproducing and fixing the exact installed failure.
-- Standalone per-user EXE `desktopApp/build/installer/Revibe-1.0.0-Setup.exe`: **148,282,573 bytes**,
-  SHA-256 `52f49a1779a2d91a7fecd935936e5ffe311fd4f97554d032dc7c8b05c02e44bf`.
+- Published per-user EXE `Revibe-1.0.0-Setup.exe` (GitHub release `v1.0.0`): **148,854,393 bytes**,
+  SHA-256 `87fd1169f169c7a3f35cc3e28fad32605102c4be5a7dcf27dddc4e4ac7b9b0b8`.
 - Release 1.0.0 installed cleanly into an isolated per-user directory (unique AppId, leaving the
   existing 0.11.1 install untouched). The installed `Revibe.exe`, registry entry and About screen
   all report **1.0.0**. The Google mark and Spotify import glyph were verified upright in normal

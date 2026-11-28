@@ -136,7 +136,7 @@ address; the app still identifies itself by repository URL when it is unset.
 | Installed-app playback through the real UI | Passed; play, pause/resume, forward/backward seeks within 14 ms, next/previous, rapid switching, restart-to-zero, artwork/lyrics and sustained playback on itag 251 Opus 48 kHz streams |
 | App launch with bundled FFmpeg | Passed; installed test build loaded `avcodec-62`, `avformat-62`, `avutil-60` and `swresample-6` |
 | Playlist tab/import visual capture | Not captured; source and SQLite paths tested |
-| Standalone per-user EXE | `Revibe-1.0.0-Setup.exe`, 148,282,573 bytes, SHA-256 `52f49a1779a2d91a7fecd935936e5ffe311fd4f97554d032dc7c8b05c02e44bf` |
+| Standalone per-user EXE | `Revibe-1.0.0-Setup.exe` (GitHub release `v1.0.0`), 148,854,393 bytes, SHA-256 `87fd1169f169c7a3f35cc3e28fad32605102c4be5a7dcf27dddc4e4ac7b9b0b8` |
 | Release 1.0.0 version metadata | Installer file/product version, installed `Revibe.exe` and in-app About all report 1.0.0 |
 | Release 1.0.0 clean install | Passed in an isolated directory with a unique AppId; existing 0.11.1 install and data untouched, no stderr |
 | Release 1.0.0 icon QA | Google mark and Spotify import glyph upright in normal and hover states at 1440×900 logical |
