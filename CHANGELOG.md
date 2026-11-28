@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.2] - 2026-11-28
+
+### Fixed
+
+- **Made for you** now behaves like a real recommendation shelf. It uses the InnerTubeX artist
+  pages of artists you actually play, so it recommends verified multi-track albums, YouTube Music
+  editorial playlists and relevant home-feed mixes instead of several one-song releases by the same
+  artist. One album per artist is allowed, every album's real track list is checked before it is
+  shown, and duplicate YouTube Music ids are removed.
+- Recommendations are refreshed once every six hours. The last successful set and its refresh time
+  are stored in SQLite, so reopening Home, navigating away and restarting Revibe keep showing the
+  same shelf without new recommendation requests. A failed refresh keeps the previous shelf and does
+  not restart the six-hour timer.
+
 ## [1.3.1] - 2026-11-28
 
 ### Fixed

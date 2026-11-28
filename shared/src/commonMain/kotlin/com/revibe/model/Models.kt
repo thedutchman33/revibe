@@ -168,10 +168,18 @@ data class UserActivitySnapshot(
     val historySpanDays: Int = 0,
     val daysSinceLastPlay: Int? = null,
     val topArtists: List<ArtistAffinity> = emptyList(),
+    val topAlbums: List<AlbumAffinity> = emptyList(),
     val topGenres: List<GenreAffinity> = emptyList(),
 )
 
-data class ArtistAffinity(val artist: String, val plays: Int)
+data class ArtistAffinity(val artist: String, val plays: Int, val artistId: String? = null)
+data class AlbumAffinity(
+    val albumId: String,
+    val title: String,
+    val artist: String,
+    val plays: Int,
+    val artistId: String? = null,
+)
 data class GenreAffinity(val genre: String, val plays: Int)
 
 /** A real history row, for "played 2h ago" labels in the sidebar. */

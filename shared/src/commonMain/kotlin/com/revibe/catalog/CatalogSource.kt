@@ -34,6 +34,14 @@ interface CatalogSource {
     /** Provider-curated mixes from a home feed; sources without one return nothing. */
     suspend fun officialMixes(market: String): List<Album> = emptyList()
 
+    /**
+     * Provider shelves used to recommend albums, playlists and adjacent artists for
+     * one artist the user actually listens to. Sources without those shelves return
+     * an empty seed; nothing is synthesised locally.
+     */
+    suspend fun recommendationSeed(artistId: String, market: String): ArtistRecommendationSeed =
+        ArtistRecommendationSeed()
+
     suspend fun album(albumId: String, market: String): AlbumDetail
     suspend fun artist(artistId: String, market: String): ArtistDetail
     suspend fun albumsForArtist(artistId: String, market: String, limit: Int): List<Album>
@@ -48,6 +56,18 @@ interface CatalogSource {
         SearchResults(query, tracks.await(), albums.await(), artists.await(), playlists.await())
     }
 }
+
+/**
+ * Real provider shelves for one artist: multi-track albums from the artist's
+ * "Albums" shelf, YouTube Music's "Featured on" playlists and the artist's
+ * "Fans might also like" neighbours. Singles and user uploads are excluded by
+ * the provider parser itself, not by a hardcoded deny-list.
+ */
+data class ArtistRecommendationSeed(
+    val albums: List<Album> = emptyList(),
+    val playlists: List<Album> = emptyList(),
+    val relatedArtists: List<Artist> = emptyList(),
+)
 
 /** Long-form artist information from a separate, attributed knowledge source. */
 interface ArtistKnowledgeSource {

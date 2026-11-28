@@ -8,6 +8,7 @@ import com.revibe.imports.ImportRepository
 import com.revibe.library.LibraryRepository
 import com.revibe.local.LocalLibrary
 import com.revibe.lyrics.LyricsRepository
+import com.revibe.personalization.MadeForYouService
 import com.revibe.playback.PlaybackSessionRepository
 import com.revibe.playback.PlayerController
 import com.revibe.playback.TrackStreamResolver
@@ -51,4 +52,7 @@ class AppGraph(
     val platformName: String,
     val dataDirectory: String,
     val appVersion: String,
-)
+) {
+    /** One cache-coordinated Made for You pipeline per app graph. */
+    val recommendations: MadeForYouService by lazy { MadeForYouService(catalog, library) }
+}

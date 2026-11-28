@@ -11,12 +11,21 @@ import com.revibe.model.Track
 import com.revibe.model.UserActivitySnapshot
 import com.revibe.sync.SearchEntry
 
+/** Last successful recommendation refresh, persisted in SQLite. */
+data class RecommendationCacheRow(val refreshedAt: Long, val payload: String)
+
+/** Small contract kept separate so recommendation logic can be tested without a full library. */
+interface RecommendationCacheStore {
+    suspend fun recommendationCache(): RecommendationCacheRow?
+    suspend fun saveRecommendationCache(row: RecommendationCacheRow)
+}
+
 /**
  * Platform-neutral persistence contract. The desktop target implements this with
  * SQLite (JDBC); Android/iOS can implement the same interface with Room/SQLDelight
  * without touching repositories, controllers or UI.
  */
-interface LibraryStore {
+interface LibraryStore : RecommendationCacheStore {
     suspend fun likedTracks(): List<Track>
     suspend fun likedIds(): Set<String>
     suspend fun addLikedTrack(track: Track)

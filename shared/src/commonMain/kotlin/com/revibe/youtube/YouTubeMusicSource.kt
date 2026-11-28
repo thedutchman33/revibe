@@ -13,6 +13,7 @@ import com.metrolist.innertubex.extraction.InnerTubeExtractor
 import com.metrolist.innertubex.extraction.StreamResolveException
 import com.metrolist.innertubex.extraction.YtConfigParserImpl
 import com.metrolist.innertubex.models.YouTubeClient
+import com.revibe.catalog.ArtistRecommendationSeed
 import com.revibe.catalog.CatalogSource
 import com.revibe.model.Album
 import com.revibe.model.AlbumDetail
@@ -324,6 +325,109 @@ class YouTubeMusicSource(
 
     override suspend fun albumsForArtist(artistId: String, market: String, limit: Int): List<Album> =
         artist(artistId, market).albums.take(limit)
+
+    /**
+     * Reads the artist page's real "Albums", "Featured on" and "Fans might also
+     * like" shelves. Unlike a plain album search, "Albums" never mixes in the
+     * "Singles and EPs" shelf, and the featured playlists are the YouTube Music
+     * editorial ones the provider already associates with this artist.
+     */
+    override suspend fun recommendationSeed(artistId: String, market: String): ArtistRecommendationSeed {
+        val rawId = artistId.substringAfter("${idPrefix}artist:")
+            .ifBlank { artistId.removePrefix(idPrefix) }
+        if (rawId.isBlank()) return ArtistRecommendationSeed()
+        val response = apiRequest("artist recommendations") { client ->
+            client.browse(YouTubeClient.WEB_REMIX, rawId)
+        }
+        val root = parseJson(response)
+        val pageArtist = findHeader(root)?.title
+        val albums = mutableListOf<Album>()
+        val playlists = mutableListOf<Album>()
+        val related = mutableListOf<Artist>()
+        root.findAll("musicCarouselShelfRenderer").forEach { shelf ->
+            val header = shelf.shelfHeaderTitle()?.lowercase().orEmpty()
+            when {
+                header.startsWith("albums") -> shelf.findAll("musicTwoRowItemRenderer").forEach { item ->
+                    // The provider keeps singles and EPs in a separate shelf; this
+                    // metadata check is a second guard against a mixed response.
+                    val subtitle = item.obj("subtitle")?.firstText().orEmpty()
+                    if (!subtitle.contains("single", ignoreCase = true) &&
+                        !subtitle.contains("ep", ignoreCase = true)
+                    ) {
+                        parseAlbumCard(item, artistFallback = pageArtist)
+                            ?.copy(artistId = "${idPrefix}artist:$rawId")
+                            ?.let(albums::add)
+                    }
+                }
+                header.contains("featured on") -> shelf.findAll("musicTwoRowItemRenderer").forEach { item ->
+                    parseArtistPlaylistCard(item)?.let(playlists::add)
+                }
+                header.contains("might also like") ||
+                    header.contains("similar artists") -> shelf.findAll("musicTwoRowItemRenderer").forEach { item ->
+                    parseRelatedArtistCard(item)?.let(related::add)
+                }
+            }
+        }
+        return ArtistRecommendationSeed(
+            albums = albums.distinctBy { it.id }.take(30),
+            playlists = playlists.distinctBy { it.id }.take(10),
+            relatedArtists = related.distinctBy { it.id }.take(10),
+        )
+    }
+
+    private fun JsonObject.shelfHeaderTitle(): String? {
+        val header = obj("header") ?: return null
+        return header.obj("musicCarouselShelfBasicHeaderRenderer")?.obj("title")?.firstText()
+            ?: header.obj("title")?.firstText()
+    }
+
+    private fun parseArtistPlaylistCard(renderer: JsonObject): Album? {
+        val title = renderer.obj("title")?.firstText()?.takeIf { it.isNotBlank() } ?: return null
+        val browseId = renderer.obj("navigationEndpoint")?.obj("browseEndpoint")?.str("browseId")
+        val playlistId = when {
+            browseId?.startsWith("VL") == true -> browseId.removePrefix("VL")
+            browseId?.startsWith("PL") == true -> browseId
+            else -> renderer.findAll("watchPlaylistEndpoint")
+                .mapNotNull { endpoint -> endpoint.str("playlistId") }
+                .firstOrNull { it.startsWith("PL") || it.startsWith("RD") }
+        } ?: return null
+        if (!playlistId.startsWith("PL") && !playlistId.startsWith("RD")) return null
+        val subtitle = renderer.obj("subtitle")?.firstText().orEmpty()
+        val owner = subtitle.split('•')
+            .map(String::trim)
+            .firstOrNull { part ->
+                part.isNotBlank() && part != "Playlist" && part.toIntOrNull() == null &&
+                    !part.contains("view", ignoreCase = true)
+            }
+            ?: "YouTube Music"
+        return Album(
+            id = "${idPrefix}playlist:$playlistId",
+            title = title,
+            artist = owner,
+            artworkUrl = renderer.thumbnailUrl(),
+            trackCount = 0,
+            genre = "YouTube Music playlist",
+            source = MusicSourceId.YOUTUBE_MUSIC,
+            isPlaylist = true,
+        )
+    }
+
+    private fun parseRelatedArtistCard(renderer: JsonObject): Artist? {
+        val name = renderer.obj("title")?.firstText()?.takeIf { it.isNotBlank() } ?: return null
+        val browse = renderer.obj("navigationEndpoint")?.obj("browseEndpoint") ?: return null
+        val pageType = browse.obj("browseEndpointContextSupportedConfigs")
+            ?.obj("browseEndpointContextMusicConfig")
+            ?.str("pageType")
+        val browseId = browse.str("browseId") ?: return null
+        if (pageType != "MUSIC_PAGE_TYPE_ARTIST" && !browseId.startsWith("UC")) return null
+        return Artist(
+            id = "${idPrefix}artist:$browseId",
+            name = name,
+            imageUrl = renderer.thumbnailUrl(),
+            genre = "Online catalog",
+            source = MusicSourceId.YOUTUBE_MUSIC,
+        )
+    }
 
     override suspend fun tracksForArtist(artistId: String, artistName: String, market: String, limit: Int): List<Track> =
         artist(artistId, market).topTracks.take(limit)

@@ -81,4 +81,7 @@ class CatalogRepository(
 
     suspend fun shelfTracks(query: String, market: String, limit: Int = 20): List<Track> =
         sources.shelfTracks(query, market, limit)
+
+    suspend fun recommendationSeed(artistId: String, market: String): ArtistRecommendationSeed =
+        sources.recommendationSeed(artistId, market)
 }

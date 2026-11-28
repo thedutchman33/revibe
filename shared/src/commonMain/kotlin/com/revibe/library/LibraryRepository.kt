@@ -14,7 +14,7 @@ import com.revibe.sync.SearchEntry
  * Thin domain layer over [LibraryStore]. Keeps UI code free of persistence
  * details and gives one place to add cloud sync later.
  */
-class LibraryRepository(private val store: LibraryStore) {
+class LibraryRepository(private val store: LibraryStore) : RecommendationCacheStore {
 
     suspend fun likedTracks(): List<Track> = store.likedTracks()
     suspend fun likedIds(): Set<String> = store.likedIds()
@@ -78,4 +78,7 @@ class LibraryRepository(private val store: LibraryStore) {
     suspend fun activity(): UserActivitySnapshot = store.userActivity()
     suspend fun searchHistory(limit: Int = 8): List<SearchEntry> = store.searchHistory(limit)
     suspend fun recordSearch(query: String): SearchEntry = store.recordSearch(query)
+
+    override suspend fun recommendationCache(): RecommendationCacheRow? = store.recommendationCache()
+    override suspend fun saveRecommendationCache(row: RecommendationCacheRow) = store.saveRecommendationCache(row)
 }

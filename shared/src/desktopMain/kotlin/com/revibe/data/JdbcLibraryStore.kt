@@ -8,7 +8,9 @@ import com.revibe.imports.UndoImportResult
 import com.revibe.imports.ImportedPlaylistResult
 import com.revibe.imports.SearchImportRow
 import com.revibe.library.LibraryStore
+import com.revibe.library.RecommendationCacheRow
 import com.revibe.model.Album
+import com.revibe.model.AlbumAffinity
 import com.revibe.model.Artist
 import com.revibe.model.ArtistAffinity
 import com.revibe.model.CachedLyrics
@@ -198,6 +200,15 @@ class JdbcLibraryStore(dbFile: File, private val io: CoroutineDispatcher) : Libr
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS recommendation_cache (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    refreshed_at INTEGER NOT NULL,
+                    payload TEXT NOT NULL
                 )
                 """.trimIndent(),
             )
@@ -1127,13 +1138,48 @@ class JdbcLibraryStore(dbFile: File, private val io: CoroutineDispatcher) : Libr
         val topArtists = connection.createStatement().use { statement ->
             statement.executeQuery(
                 """
-                SELECT t.artist, COUNT(*) AS plays FROM history h
+                SELECT t.artist, COUNT(*) AS plays, MAX(NULLIF(t.artist_id, '')) AS artist_id
+                FROM history h
                 JOIN tracks t ON t.id = h.track_id
                 WHERE TRIM(t.artist) <> ''
                 GROUP BY LOWER(t.artist) ORDER BY plays DESC, t.artist ASC LIMIT 5
                 """.trimIndent(),
             ).use { rows ->
-                buildList { while (rows.next()) add(ArtistAffinity(rows.getString(1), rows.getInt(2))) }
+                buildList {
+                    while (rows.next()) {
+                        add(ArtistAffinity(rows.getString(1), rows.getInt(2), rows.getString(3)))
+                    }
+                }
+            }
+        }
+
+        // Albums are a taste signal for recommendation quality and a guard against
+        // showing the same record the user already has in heavy rotation.
+        val topAlbums = connection.createStatement().use { statement ->
+            statement.executeQuery(
+                """
+                SELECT t.album_id, t.album, t.artist, COUNT(*) AS plays,
+                       MAX(NULLIF(t.artist_id, '')) AS artist_id
+                FROM history h
+                JOIN tracks t ON t.id = h.track_id
+                WHERE t.source = 'YOUTUBE_MUSIC'
+                  AND t.album_id IS NOT NULL AND TRIM(t.album_id) <> ''
+                GROUP BY t.album_id ORDER BY plays DESC, t.album ASC LIMIT 5
+                """.trimIndent(),
+            ).use { rows ->
+                buildList {
+                    while (rows.next()) {
+                        add(
+                            AlbumAffinity(
+                                albumId = rows.getString(1),
+                                title = rows.getString(2),
+                                artist = rows.getString(3),
+                                plays = rows.getInt(4),
+                                artistId = rows.getString(5),
+                            ),
+                        )
+                    }
+                }
             }
         }
 
@@ -1176,6 +1222,7 @@ class JdbcLibraryStore(dbFile: File, private val io: CoroutineDispatcher) : Libr
             historySpanDays = spanDays,
             daysSinceLastPlay = if (newestPlay > 0) ((now - newestPlay) / day).toInt() else null,
             topArtists = topArtists,
+            topAlbums = topAlbums,
             topGenres = topGenres,
         )
     }
@@ -1265,6 +1312,36 @@ class JdbcLibraryStore(dbFile: File, private val io: CoroutineDispatcher) : Libr
             statement.setString(3, synced)
             statement.setString(4, source)
             statement.setLong(5, System.currentTimeMillis())
+            statement.executeUpdate()
+        }
+        Unit
+    }
+
+    // ---------------------------------------------------- recommendations
+
+    override suspend fun recommendationCache(): RecommendationCacheRow? = withDb { connection ->
+        connection.prepareStatement(
+            "SELECT refreshed_at, payload FROM recommendation_cache WHERE id = 1",
+        ).use { statement ->
+            statement.executeQuery().use { rows ->
+                if (rows.next()) {
+                    RecommendationCacheRow(rows.getLong("refreshed_at"), rows.getString("payload"))
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
+    override suspend fun saveRecommendationCache(row: RecommendationCacheRow) = withDb { connection ->
+        connection.prepareStatement(
+            """
+            INSERT INTO recommendation_cache(id, refreshed_at, payload) VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET refreshed_at = excluded.refreshed_at, payload = excluded.payload
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setLong(1, row.refreshedAt)
+            statement.setString(2, row.payload)
             statement.executeUpdate()
         }
         Unit

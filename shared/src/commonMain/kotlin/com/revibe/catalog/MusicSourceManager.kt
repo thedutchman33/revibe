@@ -82,6 +82,17 @@ class MusicSourceManager(private val sources: List<CatalogSource>) {
         return emptyList()
     }
 
+    suspend fun recommendationSeed(artistId: String, market: String): ArtistRecommendationSeed {
+        val source = sourceFor(artistId) ?: primary
+        return try {
+            source.recommendationSeed(artistId, market)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            ArtistRecommendationSeed()
+        }
+    }
+
     suspend fun officialMixes(market: String): List<Album> {
         val mixes = mutableListOf<Album>()
         for (source in sources) {

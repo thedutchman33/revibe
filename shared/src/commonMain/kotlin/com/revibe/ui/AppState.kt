@@ -33,6 +33,8 @@ import com.revibe.lyrics.Lyrics
 import com.revibe.personalization.HomepagePlan
 import com.revibe.personalization.HomepageSectionKind
 import com.revibe.personalization.HomepageSectionManager
+import com.revibe.personalization.RecommendedAlbum
+import com.revibe.personalization.RecommendedContentType
 import com.revibe.personalization.UserMaturity
 import com.revibe.playback.PlaybackSession
 import com.revibe.ui.theme.RevibeColors
@@ -533,9 +535,7 @@ class AppViewModel(private val graph: AppGraph) {
                     // A played playlist is real recent history even before the first track row lands.
                     val plan = HomepageSectionManager.plan(activity, recent.isNotEmpty() || recentPlaylists.isNotEmpty())
                     val discovery = loadDiscoveryShelves(currentMarket)
-                    val historyArtists = (history.map { it.track.artist } + recent.map { it.artist })
-                        .distinctBy { it.trim().lowercase() }
-                    val personal = loadPersonalShelves(activity, plan, currentMarket, historyArtists)
+                    val personal = loadPersonalShelves(activity, plan, currentMarket, history)
                     HomeData(activity, plan, recent, history, followed, playlists, recentPlaylists, discovery, personal)
                 }
             }.onSuccess { data ->
@@ -581,15 +581,16 @@ class AppViewModel(private val graph: AppGraph) {
 
     /**
      * Personal shelves are provider results for artists that actually appear in
-     * the user's history. Made for you contains official YouTube Music home-feed
-     * mixes plus real albums; top mixes keep their real provider tracks. No item
-     * is invented, and an empty provider response omits the shelf or type.
+     * the user's history. Made for you is produced by [MadeForYouService], which
+     * caches one successful set for six hours and verifies every album's real
+     * track list. Top mixes keep their real provider tracks. No item is invented,
+     * and an empty provider response omits the shelf or type.
      */
     private suspend fun loadPersonalShelves(
         activity: UserActivitySnapshot,
         plan: HomepagePlan,
         market: String,
-        historyArtists: List<String>,
+        history: List<PlayedTrack>,
     ): List<Shelf> = coroutineScope {
         val wantsMadeForYou = HomepageSectionKind.MADE_FOR_YOU in plan.sections
         val wantsTopMixes = HomepageSectionKind.TOP_MIXES in plan.sections
@@ -598,17 +599,14 @@ class AppViewModel(private val graph: AppGraph) {
         val artists = activity.topArtists.take(3).map { it.artist }
         if (artists.isEmpty()) return@coroutineScope emptyList()
 
-        data class ArtistPicks(
-            val artist: String,
-            val albums: List<Album>,
-            val tracks: List<Track>,
-        )
+        data class ArtistPicks(val artist: String, val tracks: List<Track>)
 
-        // Fetch the provider's curated home feed once, then keep only official
-        // mixes whose artist lineup contains someone from the local history.
-        val officialMixesTask = if (wantsMadeForYou) {
+        // The service owns freshness, de-duplication and provider fallbacks, so
+        // every Home visit does not trigger a new recommendation request.
+        val madeForYouTask = if (wantsMadeForYou) {
             async {
-                runCatching { graph.catalog.officialMixes(market) }.getOrDefault(emptyList())
+                runCatching { graph.recommendations.recommendations(activity, history, market) }
+                    .getOrDefault(emptyList())
             }
         } else {
             null
@@ -616,17 +614,6 @@ class AppViewModel(private val graph: AppGraph) {
 
         val perArtist = artists.map { artist ->
             async {
-                val albums = if (wantsMadeForYou) {
-                    runCatching { graph.catalog.shelfAlbums(artist, market, 10) }
-                        .getOrDefault(emptyList())
-                        .filter { album ->
-                            !album.isPlaylist && album.id.isNotBlank() &&
-                                album.artist.contains(artist, ignoreCase = true)
-                        }
-                        .distinctBy { it.id }
-                } else {
-                    emptyList()
-                }
                 val tracks = if (wantsTopMixes) {
                     runCatching { graph.catalog.shelfTracks(artist, market, 12) }
                         .getOrDefault(emptyList())
@@ -635,50 +622,28 @@ class AppViewModel(private val graph: AppGraph) {
                 } else {
                     emptyList()
                 }
-                ArtistPicks(artist, albums, tracks)
+                ArtistPicks(artist, tracks)
             }
         }.awaitAll()
 
-        val officialMixes = officialMixesTask?.await().orEmpty()
+        val madeForYou = madeForYouTask?.await().orEmpty()
 
         buildList {
-            if (wantsMadeForYou) {
-                val lowerArtists = (artists + historyArtists)
-                    .flatMap { name -> name.split(ARTIST_NAME_SEPARATORS) }
-                    .map { it.trim().lowercase() }
-                    .filter { it.length >= 3 }
-                    .distinct()
-                val mixes = officialMixes
-                    .mapNotNull { mix ->
-                        val haystack = "${mix.title} ${mix.artist}".lowercase()
-                        val relevance = lowerArtists.count { haystack.contains(it) }
-                        if (relevance == 0) null else mix.copy(artist = "YouTube Music") to relevance
-                    }
-                    .sortedByDescending { it.second }
-                    .map { it.first }
-                    .distinctBy { it.id }
-                    .take(3)
-                val albums = perArtist.flatMap { it.albums }.distinctBy { it.id }.take(5)
-                val picks = buildList {
-                    repeat(maxOf(mixes.size, albums.size)) { index ->
-                        mixes.getOrNull(index)?.let { add(it) }
-                        albums.getOrNull(index)?.let { add(it) }
-                    }
-                }.distinctBy { it.id }.take(8)
-                if (picks.isNotEmpty()) {
-                    add(
-                        Shelf(
-                            id = "made-for-you",
-                            title = "Made for you",
-                            subtitle = when {
-                                mixes.isNotEmpty() && albums.isNotEmpty() -> "Official mixes and albums from artists you play"
-                                mixes.isNotEmpty() -> "Official mixes from artists you play"
-                                else -> "Albums from artists you play"
-                            },
-                            items = picks.map { it.toRecommendationItem() },
-                        ),
-                    )
-                }
+            if (wantsMadeForYou && madeForYou.isNotEmpty()) {
+                val hasAlbums = madeForYou.any { it.type == RecommendedContentType.ALBUM }
+                val hasCollections = madeForYou.any { it.type != RecommendedContentType.ALBUM }
+                add(
+                    Shelf(
+                        id = "made-for-you",
+                        title = "Made for you",
+                        subtitle = when {
+                            hasAlbums && hasCollections -> "Albums, playlists and mixes from artists you play"
+                            hasAlbums -> "Albums from artists you play"
+                            else -> "Playlists and mixes from artists you play"
+                        },
+                        items = madeForYou.map { it.toRecommendationItem() },
+                    ),
+                )
             }
             if (wantsTopMixes) {
                 perArtist.forEach { picks ->
@@ -2065,18 +2030,13 @@ fun Album.toMediaItem() = MediaItem(
     album = this,
 )
 
-private val ARTIST_NAME_SEPARATORS = Regex(
-    """\s*(?:,|&|\bfeat\.?\b|\bft\.?\b|\s+-\s+)\s*""",
-    RegexOption.IGNORE_CASE,
-)
-
-/** Makes provider mixes visually distinct from albums on the personalised shelf. */
-private fun Album.toRecommendationItem() = MediaItem(
-    id = id,
-    title = title,
-    subtitle = if (isPlaylist) "Official mix · $artist" else "Album · $artist",
-    imageUrl = artworkUrl,
-    album = this,
+/** Keeps the existing card design while labelling the provider's real content type. */
+private fun RecommendedAlbum.toRecommendationItem() = MediaItem(
+    id = album.id,
+    title = album.title,
+    subtitle = "${type.label} · ${album.artist}",
+    imageUrl = album.artworkUrl,
+    album = album,
 )
 
 fun Track.toMediaItem() = MediaItem(

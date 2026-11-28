@@ -6,8 +6,7 @@ Music results for artists that actually appear in history. The top playlist grid
 playlists with a real persisted play, up to eight, newest first; it is absent until the first
 playlist is played.
 
-Still missing: returning-user boost, genre-derived mixes, per-section caching and the full
-loading/empty/error matrix below.
+Still missing: returning-user boost, genre-derived mixes and the full loading/empty/error matrix below.
 
 ## Non-negotiables
 
@@ -65,7 +64,7 @@ without the database or network.
 | --- | --- | --- | --- |
 | Recent playlists | ≥1 playlist play | `playlist_plays` joined to `playlists` | 4×2 grid, up to 8, newest first, first available cover; no empty state |
 | Recently played | any real history | `history` | Real rows only |
-| Made for you | EARLY+ and top artists exist | Official YouTube Music home mixes + album search for top 3 artists | Only official RD… mixes matched to history artists; no user playlists; either type is omitted when empty |
+| Made for you | EARLY+ and top artists exist | InnerTubeX artist shelves ("Albums", "Featured on", "Fans might also like") + relevant home-feed mixes | Six-hour SQLite cache; every album is verified multi-track; one album per artist; prior ids avoided; singles, local and non-YouTube items never included |
 | Your top mixes | ACTIVE+ | one provider shelf per top artist | Titled "Because you listen to…" |
 | Artists you follow | non-NEW and followed > 0 | `followed_artists` | Omit when empty |
 | Discovery | every state | YouTube Music search shelves | Real results; always keeps discovery present |
