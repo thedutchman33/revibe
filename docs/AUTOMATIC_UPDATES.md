@@ -33,6 +33,9 @@ Every push to `main` runs `.github/workflows/release.yml`. The workflow:
    - `feat:` → minor (`0.9.0` → `0.10.0`);
    - `fix:`, `perf:`, `docs:`, `ci:` or any other conventional type → patch;
    - `type!:` or `BREAKING CHANGE` → minor while on `0.x`, major from `1.0.0`;
+   - a deliberate major release on `0.x` is **not** inferred from `type!`; run the
+     workflow manually with the exact `version` (for example `1.0.0`) and
+     `dry_run` disabled. The manual version must be greater than the latest tag.
 3. runs the deterministic desktop tests on Windows. The four
    live YouTube transport checks are opt-in (`include_live_tests`) because GitHub's
    datacenter IPs are currently served SABR-only responses;

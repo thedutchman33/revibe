@@ -65,7 +65,9 @@ overrides them from the computed tag. The same version drives the app image, ins
 `.github/workflows/release.yml` owns releases. A push to `main` computes the next SemVer from the
 latest tag and conventional commit subjects, runs the full test suite, builds the EXE, performs a
 clean install and a real EXE upgrade on a fresh Windows runner, and publishes only if every job
-passes. The workflow does not commit a version bump back to `main`, so it cannot loop. Failed tests
+passes. Breaking changes on `0.x` intentionally bump the minor version; a deliberate
+major release is started manually with the exact `version` input and `dry_run` disabled.
+The workflow does not commit a version bump back to `main`, so it cannot loop. Failed tests
 or install checks stop before tagging. See [AUTOMATIC_UPDATES.md](AUTOMATIC_UPDATES.md) for the
 manifest, signing policy, update handoff and manual dry-run instructions.
 
