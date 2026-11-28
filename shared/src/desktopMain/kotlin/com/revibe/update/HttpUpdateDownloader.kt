@@ -7,6 +7,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.net.ProxySelector
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -36,6 +37,8 @@ class HttpUpdateDownloader(
     private val stallTimeout: Duration = Duration.ofSeconds(45),
     private val attempts: Int = 3,
     private val retryDelayMs: Long = 2_000L,
+    /** Loopback proxy that fails over between a host's addresses; null connects directly. */
+    private val proxy: ProxySelector? = null,
 ) : UpdateDownloader {
     override suspend fun download(
         url: String,
@@ -88,10 +91,11 @@ class HttpUpdateDownloader(
         part.delete()
         destination.delete()
 
-        val client = HttpClient.newBuilder()
+        val clientBuilder = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(20))
             .followRedirects(HttpClient.Redirect.NORMAL)
-            .build()
+        if (proxy != null) clientBuilder.proxy(proxy)
+        val client = clientBuilder.build()
         val request = HttpRequest.newBuilder(URI.create(url))
             // Covers the response headers only; the body is covered by the stall watchdog.
             .timeout(responseTimeout)

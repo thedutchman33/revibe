@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.1] - 2026-11-28
+
+### Fixed
+
+- Update checks and installer downloads no longer fail when one of GitHub's release CDN addresses
+  is unreachable. Java's HTTP clients connect to the first resolved address only, so a single
+  blackholed CDN edge produced `Could not reach the update server.` — and the original endless
+  `Updating 0%`. Update traffic now runs through a loopback CONNECT proxy that tries every resolved
+  address in turn and tunnels the first live one, leaving TLS and certificate validation untouched.
+
 ## [1.2.0] - 2026-11-28
 
 ### Added

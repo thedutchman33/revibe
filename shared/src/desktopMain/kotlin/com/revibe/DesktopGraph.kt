@@ -37,6 +37,7 @@ import com.revibe.sync.SyncEngine
 import com.revibe.update.FileUpdateStateStore
 import com.revibe.update.HttpUpdateDownloader
 import com.revibe.update.HttpUpdateManifestClient
+import com.revibe.update.ResilientHttpProxy
 import com.revibe.update.Sha256FileHasher
 import com.revibe.update.UpdateConfig
 import com.revibe.update.UpdateService
@@ -44,6 +45,7 @@ import com.revibe.update.WindowsInstaller
 import com.revibe.update.WindowsPublisherVerifier
 import com.revibe.youtube.YouTubeMusicSource
 import io.ktor.client.HttpClient
+import io.ktor.client.engine.ProxyConfig
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -56,6 +58,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.ProxySelector
 
 /**
  * Builds the desktop graph. One place wires HTTP, storage, audio and the UI
@@ -92,6 +96,34 @@ fun createDesktopGraph(): AppGraph {
         defaultRequest {
             header("User-Agent", "Revibe/0.1 (Windows desktop; https://github.com/revibe)")
             header("Accept-Language", "en")
+        }
+    }
+
+    // Update traffic uses a loopback proxy that tries every resolved CDN address.
+    // One blackholed GitHub edge otherwise hangs Java's first-address connect and
+    // the app reports "Could not reach the update server." or sits on 0%.
+    // If the loopback listener cannot start, updates fall back to a direct
+    // connection rather than blocking application startup.
+    val updateProxy = runCatching { ResilientHttpProxy() }.getOrNull()
+    val updateProxySelector = updateProxy?.let {
+        ProxySelector.of(InetSocketAddress("127.0.0.1", it.port))
+    }
+    val updateHttp = HttpClient(CIO) {
+        expectSuccess = false
+        followRedirects = true
+        install(HttpTimeout) {
+            requestTimeoutMillis = 25_000
+            connectTimeoutMillis = 12_000
+            socketTimeoutMillis = 25_000
+        }
+        defaultRequest {
+            header("User-Agent", "Revibe/0.1 (Windows desktop; https://github.com/revibe)")
+            header("Accept-Language", "en")
+        }
+        if (updateProxy != null) {
+            engine {
+                proxy = ProxyConfig(java.net.Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", updateProxy.port))
+            }
         }
     }
 
@@ -212,8 +244,8 @@ fun createDesktopGraph(): AppGraph {
             updatesDirectory = updatesDirectory.absolutePath,
             allowUnsignedInstaller = allowUnsignedUpdates,
         ),
-        manifestClient = HttpUpdateManifestClient(http),
-        downloader = HttpUpdateDownloader(),
+        manifestClient = HttpUpdateManifestClient(updateHttp),
+        downloader = HttpUpdateDownloader(proxy = updateProxySelector),
         hasher = Sha256FileHasher(),
         publisherVerifier = WindowsPublisherVerifier(),
         installer = WindowsInstaller(updatesDirectory),
