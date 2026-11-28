@@ -40,7 +40,9 @@ compose.desktop {
             description = "Revibe - Your music. Your vibe."
             vendor = "Revibe"
             copyright = "Copyright 2026 Revibe"
-            modules("java.sql", "java.naming", "jdk.httpserver", "jdk.unsupported")
+            // java.net.http is used by the update downloader; without it every
+            // packaged build crashes before the first byte is transferred.
+            modules("java.sql", "java.naming", "java.net.http", "jdk.httpserver", "jdk.unsupported")
             windows {
                 iconFile.set(project.file("icons/revibe.ico"))
                 menuGroup = "Revibe"

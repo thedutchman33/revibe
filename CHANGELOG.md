@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.1] - 2026-11-28
+
+### Fixed
+
+- Packaged Windows builds now include the `java.net.http` runtime module that the installer
+  downloader uses. Without it, clicking Update threw `NoClassDefFoundError` before opening a
+  connection and left the app permanently on `Downloading 0%`. In-app updates from 1.3.1 onward
+  work normally again; a 1.2.1 install needs this one manual install first.
+- If an updater runtime component is ever missing, the update now reports an error and offers Retry
+  instead of leaving the progress indicator stuck.
+
 ## [1.3.0] - 2026-11-28
 
 ### Changed

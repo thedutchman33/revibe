@@ -198,6 +198,18 @@ class UpdateServiceTest {
     }
 
     @Test
+    fun `missing updater runtime module reports error instead of hanging`() = runTest {
+        val harness = harness(downloader = LinkageErrorDownloader())
+        assertTrue(harness.service.checkForUpdates(manual = true))
+
+        assertFalse(harness.service.installUpdate())
+        val state = harness.service.state.value
+        assertEquals(UpdatePhase.ERROR, state.phase)
+        assertTrue(state.message.orEmpty().contains("runtime component"))
+        assertNull(state.progress)
+    }
+
+    @Test
     fun `interrupted download reports error and never launches`() = runTest {
         val harness = harness()
         assertTrue(harness.service.checkForUpdates(manual = true))
@@ -393,6 +405,15 @@ class UpdateServiceTest {
             onProgress(50L, 100L)
             awaitCancellation()
         }
+    }
+
+    /** Mirrors a packaged runtime that omits java.net.http. */
+    private class LinkageErrorDownloader : UpdateDownloader {
+        override suspend fun download(
+            url: String,
+            destinationPath: String,
+            onProgress: (Long, Long?) -> Unit,
+        ): String = throw NoClassDefFoundError("java/net/http/HttpClient")
     }
 
     private class FakeHasher(var hash: String) : UpdateFileHasher {

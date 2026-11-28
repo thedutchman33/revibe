@@ -279,6 +279,17 @@ class UpdateService(
             return true
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (error: LinkageError) {
+            // A packaged runtime missing java.net.http used to kill this coroutine
+            // with NoClassDefFoundError and leave the UI on "Downloading 0%".
+            _state.value = _state.value.copy(
+                phase = UpdatePhase.ERROR,
+                message = "The updater is missing a required runtime component. " +
+                    "Reinstall Revibe from the official installer and try again.",
+                progress = null,
+                notify = true,
+            )
+            return false
         } catch (error: Exception) {
             val message = when (error) {
                 is UpdateException -> error.message
