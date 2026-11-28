@@ -448,8 +448,10 @@ jobs:
           $env:REVIBE_TEST_UPDATER_INSTALLER = $env:INSTALLER_PATH
           $env:REVIBE_TEST_UPDATER_APP_DIR = $env:BASELINE_DIR
           $env:REVIBE_TEST_UPDATER_VERSION = $env:VERSION
+          # This test runs the real installer and depends on machine state, so never reuse a cached result.
           & .\gradlew.bat :shared:desktopTest `
             --tests "com.revibe.update.ExeUpdaterHandoffTest" `
+            --rerun `
             --console=plain
           if ($LASTEXITCODE -ne 0) { throw "The real EXE updater handoff test failed." }
 
