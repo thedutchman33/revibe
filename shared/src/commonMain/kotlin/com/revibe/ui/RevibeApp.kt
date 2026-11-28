@@ -197,7 +197,9 @@ fun RevibeApp(
                             if (rightTarget > 0f) {
                                 VerticalResizeHandle(
                                     onDrag = { delta ->
-                                        vm.resizeRightPanel(vm.rightPanelWidth + delta)
+                                        // The rail is anchored to the right edge, so moving the handle
+                                        // right must narrow it for the edge to follow the cursor.
+                                        vm.resizeRightPanel(vm.rightPanelWidth - delta)
                                     },
                                     onDragStart = { draggingRight = true },
                                     onDragEnd = { draggingRight = false },

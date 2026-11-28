@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.1] - 2026-11-28
+
+### Fixed
+
+- The in-app update no longer sits on `Updating 0%` forever. A download that never receives
+  response headers, or stops delivering bytes mid-transfer, is now aborted (30 s response, 45 s
+  stall), retried up to three times and then surfaced as an error with a Retry action, instead of
+  waiting on a socket that will never answer.
+- Dragging the Queue/Lyrics rail now follows the cursor: the rail is anchored to the right edge, so
+  moving the handle right narrows it instead of widening it leftwards.
+
 ## [1.1.0] - 2026-11-28
 
 ### Changed
