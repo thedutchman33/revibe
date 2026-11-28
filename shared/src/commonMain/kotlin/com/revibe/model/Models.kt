@@ -1,5 +1,7 @@
 package com.revibe.model
 
+import kotlinx.serialization.Serializable
+
 /**
  * Every catalog item Revibe can show carries the source it came from, so the UI can
  * be honest about what is playable and where the metadata came from.
@@ -28,6 +30,7 @@ enum class PlaybackKind(val label: String) {
     UNAVAILABLE("Unavailable"),
 }
 
+@Serializable
 data class Track(
     val id: String,
     val title: String,

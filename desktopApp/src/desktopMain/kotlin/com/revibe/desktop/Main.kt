@@ -45,6 +45,7 @@ import com.revibe.ui.components.TopBar
 import com.revibe.ui.theme.LocalAccent
 import com.revibe.ui.theme.RevibeColors
 import com.revibe.ui.theme.RevibeTheme
+import kotlinx.coroutines.runBlocking
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.GraphicsEnvironment
@@ -71,6 +72,9 @@ fun main() {
             position = WindowPosition.Aligned(Alignment.Center),
         )
         val closeApp: () -> Unit = {
+            // The periodic snapshot can be up to ten seconds old; write the exact
+            // track/position before the player is released.
+            runBlocking { runCatching { vm.persistPlaybackSession() } }
             mediaKeys.uninstall()
             vm.shutdown()
             exitApplication()

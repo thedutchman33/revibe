@@ -21,6 +21,7 @@ import com.revibe.lyrics.LyricsRepository
 import com.revibe.lyrics.UnisonLyricsSource
 import com.revibe.playback.DesktopPlaybackEngineFactory
 import com.revibe.playback.DesktopTrackStreamResolver
+import com.revibe.playback.PlaybackSessionRepository
 import com.revibe.playback.PlayerController
 import com.revibe.platform.DesktopImportFilePicker
 import com.revibe.platform.SwingFolderPicker
@@ -114,6 +115,7 @@ fun createDesktopGraph(): AppGraph {
     }
 
     val library = LibraryRepository(store)
+    val playbackSession = PlaybackSessionRepository(store)
     val youtube = YouTubeMusicSource(youtubeHttp)
     val streamResolver = DesktopTrackStreamResolver(youtube)
     val catalog = CatalogRepository(
@@ -223,6 +225,7 @@ fun createDesktopGraph(): AppGraph {
         catalog = catalog,
         library = library,
         player = player,
+        playbackSession = playbackSession,
         youtube = youtube,
         streamResolver = streamResolver,
         lyrics = lyrics,

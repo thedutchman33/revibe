@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.0] - 2026-11-28
+
+### Added
+
+- Revibe reopens where you left off. The queue, current song, play position, shuffle and repeat
+  state are saved while you listen and again on close; the next launch restores that queue paused at
+  the exact second you left it, so pressing play continues the song instead of starting over.
+- A **Visit ReelHouse** button sits in the top bar left of the update pill, with `Reel` in white and
+  `House` in red, and opens <https://reelhouse1.vercel.app/> in the default browser.
+
 ## [1.1.1] - 2026-11-28
 
 ### Fixed

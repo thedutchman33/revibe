@@ -44,6 +44,7 @@ import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.AccountCircle
@@ -77,7 +78,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -137,11 +142,18 @@ fun TopBar(
     val sync by vm.syncStatus.collectAsState()
     val update by vm.updateState.collectAsState()
     val signedInUser = (account as? AccountState.SignedIn)?.user
-    Row(
+    BoxWithConstraints(
         Modifier
             .fillMaxWidth()
             .height(LayoutSpec.TOP_BAR_HEIGHT.dp)
-            .background(RevibeColors.Base)
+            .background(RevibeColors.Base),
+    ) {
+    // The fixed centre cluster must not squeeze the window controls on a narrow
+    // window, so the search pill gives up width first.
+    val searchWidth = if (maxWidth < 1280.dp) 360.dp else 474.dp
+    Row(
+        Modifier
+            .fillMaxSize()
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -169,6 +181,7 @@ fun TopBar(
         }
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ReelHouseTopBarAction()
             UpdateTopBarAction(vm, update)
             Box(
                 Modifier
@@ -190,7 +203,7 @@ fun TopBar(
                 value = vm.searchQuery,
                 onValueChange = vm::onSearchQueryChange,
                 onSubmit = { vm.submitSearch() },
-                modifier = Modifier.widthIn(max = 474.dp).width(474.dp),
+                modifier = Modifier.widthIn(max = searchWidth).width(searchWidth),
                 height = 40.dp,
                 trailing = {
                     IconAction(
@@ -373,6 +386,49 @@ fun TopBar(
             Spacer(Modifier.width(8.dp))
             windowControls()
         }
+    }
+    }
+}
+
+private const val REELHOUSE_URL = "https://reelhouse1.vercel.app/"
+private val ReelHouseRed = Color(0xFFFF4D4D)
+
+/** Prominent partner link in the global bar, immediately left of the update pill. */
+@Composable
+private fun ReelHouseTopBarAction() {
+    val uriHandler = LocalUriHandler.current
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    val shape = RoundedCornerShape(17.dp)
+    Row(
+        Modifier
+            .height(34.dp)
+            .clip(shape)
+            .background(if (hovered) RevibeColors.SurfaceHover else RevibeColors.Surface)
+            .border(1.dp, RevibeColors.Outline, shape)
+            .hoverable(interaction)
+            .clickable(interactionSource = interaction, indication = null) {
+                runCatching { uriHandler.openUri(REELHOUSE_URL) }
+            }
+            .pointerHoverIcon(PointerIcon.Hand)
+            .padding(horizontal = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(
+            Icons.Rounded.OpenInNew,
+            contentDescription = null,
+            tint = RevibeColors.TextSecondary,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            buildAnnotatedString {
+                withStyle(SpanStyle(color = RevibeColors.TextPrimary)) { append("Visit Reel") }
+                withStyle(SpanStyle(color = ReelHouseRed)) { append("House") }
+            },
+            style = RevibeType.caption,
+            maxLines = 1,
+        )
     }
 }
 

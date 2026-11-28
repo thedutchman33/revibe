@@ -8,6 +8,7 @@ import com.revibe.imports.ImportRepository
 import com.revibe.library.LibraryRepository
 import com.revibe.local.LocalLibrary
 import com.revibe.lyrics.LyricsRepository
+import com.revibe.playback.PlaybackSessionRepository
 import com.revibe.playback.PlayerController
 import com.revibe.playback.TrackStreamResolver
 import com.revibe.provider.ArtworkResolver
@@ -31,6 +32,7 @@ class AppGraph(
     val catalog: CatalogRepository,
     val library: LibraryRepository,
     val player: PlayerController,
+    val playbackSession: PlaybackSessionRepository,
     val youtube: YouTubeMusicSource,
     val streamResolver: TrackStreamResolver,
     val lyrics: LyricsRepository,

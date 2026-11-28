@@ -34,6 +34,7 @@ import com.revibe.personalization.HomepagePlan
 import com.revibe.personalization.HomepageSectionKind
 import com.revibe.personalization.HomepageSectionManager
 import com.revibe.personalization.UserMaturity
+import com.revibe.playback.PlaybackSession
 import com.revibe.ui.theme.RevibeColors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +46,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -319,6 +321,8 @@ class AppViewModel(private val graph: AppGraph) {
     private var volumePersistJob: Job? = null
     private var layoutPersistJob: Job? = null
     private var toastJob: Job? = null
+    private var lastSessionSignature: String? = null
+    private var lastSessionBucket: Long = -1L
 
     init {
         graph.updates.start()
@@ -332,6 +336,11 @@ class AppViewModel(private val graph: AppGraph) {
             rightPanelVisible = loaded.showRightPanel
             graph.player.setVolume(loaded.volume)
             graph.player.setAutoplayEnabled(loaded.autoplayEnabled)
+            val restoredSession = withContext(graph.io) {
+                runCatching { graph.playbackSession.load() }.getOrNull()
+            }
+            if (restoredSession != null) graph.player.restoreSession(restoredSession)
+            startPlaybackSessionPersistence()
             refreshLibrary()
             loadHome()
             recentSearches = runCatching {
@@ -1516,6 +1525,74 @@ class AppViewModel(private val graph: AppGraph) {
             delay(500)
             graph.settings.setVolume(volume)
         }
+    }
+
+    // ------------------------------------------------------------ session restore
+
+    /**
+     * Saves what is loaded about every ten seconds of playback and immediately on
+     * track, pause, seek-bucket or queue-mode changes. The desktop close path calls
+     * [persistPlaybackSession] for the exact final position.
+     */
+    private fun startPlaybackSessionPersistence() {
+        scope.launch {
+            graph.player.state.collect { state ->
+                val track = state.current
+                if (track == null) {
+                    if (lastSessionSignature != null) {
+                        lastSessionSignature = null
+                        lastSessionBucket = -1L
+                        withContext(graph.io) { runCatching { graph.playbackSession.clear() } }
+                    }
+                    return@collect
+                }
+                val signature = buildString {
+                    append(track.id).append('|')
+                    append(state.index).append('|')
+                    append(state.entries.map { it.track.id }.hashCode()).append('|')
+                    append(state.shuffle).append('|')
+                    append(state.repeat).append('|')
+                    append(state.contextName).append('|')
+                    append(state.isPlaying)
+                }
+                val bucket = state.positionMs / SESSION_SAVE_BUCKET_MS
+                // A load in flight reports a transient 0 before the restore seek lands;
+                // keep the already-saved position for that row until it is ready.
+                if (state.isBuffering && signature == lastSessionSignature) return@collect
+                if (signature == lastSessionSignature && bucket == lastSessionBucket) return@collect
+                lastSessionSignature = signature
+                lastSessionBucket = bucket
+                val snapshot = state.toPlaybackSession()
+                withContext(graph.io) { runCatching { graph.playbackSession.save(snapshot) } }
+            }
+        }
+    }
+
+    /** Blocking-safe snapshot write used right before the window closes. */
+    suspend fun persistPlaybackSession() {
+        val state = graph.player.state.value
+        withContext(graph.io) {
+            runCatching {
+                if (state.current == null) {
+                    graph.playbackSession.clear()
+                } else {
+                    graph.playbackSession.save(state.toPlaybackSession())
+                }
+            }
+        }
+    }
+
+    private fun com.revibe.playback.PlayerState.toPlaybackSession() = PlaybackSession(
+        queue = queue,
+        index = index.coerceAtLeast(0),
+        positionMs = positionMs.coerceAtLeast(0),
+        shuffle = shuffle,
+        repeat = repeat,
+        contextName = contextName,
+    )
+
+    private companion object {
+        const val SESSION_SAVE_BUCKET_MS = 10_000L
     }
 
     // ---------------------------------------------------------------------- local

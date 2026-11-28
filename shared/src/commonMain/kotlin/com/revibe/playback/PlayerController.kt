@@ -63,6 +63,9 @@ class PlayerController(
     private var nativeSeed: Track? = null
     private var nativeQueueEnded = false
 
+    /** Position to seek to once the restored row has been decoded and is ready. */
+    private var pendingRestorePositionMs: Long? = null
+
     init {
         engine.setListener(this)
         engine.setVolume(initialVolume)
@@ -106,6 +109,40 @@ class PlayerController(
         val list = context?.takeIf { it.isNotEmpty() } ?: listOf(track)
         val index = list.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
         playQueue(list, index, contextName)
+    }
+
+    /**
+     * Reopens the queue saved at the end of the previous session without starting
+     * audio. The engine is asked to seek to [positionMs] as soon as it reports the
+     * restored row ready, so the bar shows the same point the user left it at.
+     */
+    fun restoreSession(session: PlaybackSession) {
+        val playable = session.queue.filter { it.playable || (resolver != null && it.needsResolution) }
+        if (playable.isEmpty()) return
+        val anchor = session.queue.getOrNull(session.index)
+        val entries = playable.map {
+            QueueEntry(entryId = nextEntryId(it, QueueOrigin.CONTEXT), track = it, origin = QueueOrigin.CONTEXT)
+        }
+        val index = anchor?.let { saved ->
+            entries.indexOfFirst { it.track.id == saved.id }.takeIf { it >= 0 }
+        } ?: session.index.coerceIn(entries.indices)
+        sourceEntries = entries
+        resetSessionGuards()
+        contextGeneration++
+        refillJob?.cancel()
+        _state.update {
+            it.copy(
+                entries = entries,
+                index = index,
+                shuffle = session.shuffle,
+                repeat = session.repeat,
+                contextName = session.contextName,
+                error = null,
+                autoplayMessage = null,
+                autoplayState = if (it.autoplayEnabled && autoplay != null) AutoplayState.IDLE else AutoplayState.OFF,
+            )
+        }
+        loadCurrent(autoPlay = false, resumeAtMs = session.positionMs)
     }
 
     fun togglePlayPause() {
@@ -500,11 +537,14 @@ class PlayerController(
 
     // --------------------------------------------------------------- loading
 
-    private fun loadCurrent(autoPlay: Boolean, forceRefresh: Boolean = false) {
+    private fun loadCurrent(autoPlay: Boolean, forceRefresh: Boolean = false, resumeAtMs: Long = 0) {
         val state = _state.value
         val entry = state.entries.getOrNull(state.index) ?: return
         val track = entry.track
         val generation = ++loadGeneration
+        // Only a session restore asks for a non-zero start; every other load clears
+        // the pending seek so a stale restore can never move a fresh row.
+        pendingRestorePositionMs = resumeAtMs.takeIf { it > 0 }
         val changedEntry = currentEntryId != entry.entryId
         if (changedEntry) {
             currentEntryId = entry.entryId
@@ -521,7 +561,7 @@ class PlayerController(
         _state.update {
             it.copy(
                 current = track,
-                positionMs = 0,
+                positionMs = resumeAtMs.coerceAtLeast(0),
                 durationMs = track.durationMs,
                 isBuffering = true,
                 error = null,
@@ -660,6 +700,23 @@ class PlayerController(
     // -------------------------------------------------------- engine callbacks
 
     override fun onReady(durationMs: Long) {
+        val resumeAt = pendingRestorePositionMs
+        pendingRestorePositionMs = null
+        if (resumeAt != null) {
+            val limit = if (durationMs > 0) durationMs else resumeAt
+            val target = resumeAt.coerceIn(0, limit)
+            _state.update {
+                it.copy(
+                    durationMs = if (durationMs > 0) durationMs else it.durationMs,
+                    positionMs = target,
+                    isBuffering = false,
+                )
+            }
+            // Enqueued behind the load on the engine worker, so it lands on the
+            // restored player rather than any outgoing one.
+            engine.seekTo(target)
+            return
+        }
         _state.update {
             it.copy(
                 durationMs = if (durationMs > 0) durationMs else it.durationMs,
