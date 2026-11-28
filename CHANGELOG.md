@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.0] - 2026-11-28
+
+### Changed
+
+- The top-bar search is now centred on the application window itself at every supported width,
+  instead of being shifted right by the Home and update controls beside it. It keeps its existing
+  474 dp width on standard windows, shrinks to 360 dp below 1280 dp as before, and the history
+  arrows and account/window controls stay pinned to their edges.
+- When the narrow layout cannot fit the Home disc between the arrows and the centred search (at the
+  1120 dp minimum, or while the update pill shows its longest label), Home moves just past the
+  search instead of being covered by it.
+
 ## [1.2.1] - 2026-11-28
 
 ### Fixed

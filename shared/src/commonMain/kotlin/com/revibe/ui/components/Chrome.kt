@@ -148,245 +148,277 @@ fun TopBar(
             .height(LayoutSpec.TOP_BAR_HEIGHT.dp)
             .background(RevibeColors.Base),
     ) {
-    // The fixed centre cluster must not squeeze the window controls on a narrow
+    // The fixed centre pillar must not squeeze the window controls on a narrow
     // window, so the search pill gives up width first.
     val searchWidth = if (maxWidth < 1280.dp) 360.dp else 474.dp
+    // The longest update label needs extra room, and at the narrowest allowed
+    // window even the short one does not fit. In both cases the home disc moves
+    // just past the search instead of colliding with it.
+    val longUpdateLabel = update.phase == UpdatePhase.AVAILABLE ||
+        update.phase == UpdatePhase.DOWNLOADING ||
+        update.phase == UpdatePhase.VERIFYING ||
+        update.phase == UpdatePhase.INSTALLING ||
+        update.phase == UpdatePhase.INSTALLED
+    val homeBesideSearch = maxWidth < 1170.dp || (longUpdateLabel && maxWidth < 1320.dp)
+    // A fixed-width centre pillar with equal flexible columns either side keeps
+    // the search on the window's centre line. The side columns pin the history
+    // arrows left and the account/window controls right regardless of width.
     Row(
         Modifier
             .fillMaxSize()
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            IconAction(
-                Icons.Rounded.KeyboardArrowLeft,
-                contentDescription = "Back",
-                onClick = vm::goBack,
-                enabled = vm.backStack.isNotEmpty(),
-                size = 32.dp,
-                iconSize = 22.dp,
-                tint = RevibeColors.TextSecondary,
-                hoverTint = RevibeColors.TextPrimary,
-            )
-            IconAction(
-                Icons.Rounded.KeyboardArrowRight,
-                contentDescription = "Forward",
-                onClick = vm::goForward,
-                enabled = vm.forwardStack.isNotEmpty(),
-                size = 32.dp,
-                iconSize = 22.dp,
-                tint = RevibeColors.TextSecondary,
-                hoverTint = RevibeColors.TextPrimary,
-            )
-        }
-
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ReelHouseTopBarAction()
-            UpdateTopBarAction(vm, update)
-            Box(
-                Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(if (vm.route == Route.Home) RevibeColors.SurfaceRaised else RevibeColors.Surface)
-                    .clickable { vm.openHome() }
-                    .pointerHoverIcon(PointerIcon.Hand),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Rounded.Home,
-                    contentDescription = "Home",
-                    tint = if (vm.route == Route.Home) RevibeColors.TextPrimary else RevibeColors.TextSecondary,
-                    modifier = Modifier.size(22.dp),
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                IconAction(
+                    Icons.Rounded.KeyboardArrowLeft,
+                    contentDescription = "Back",
+                    onClick = vm::goBack,
+                    enabled = vm.backStack.isNotEmpty(),
+                    size = 32.dp,
+                    iconSize = 22.dp,
+                    tint = RevibeColors.TextSecondary,
+                    hoverTint = RevibeColors.TextPrimary,
                 )
-            }
-            SearchField(
-                value = vm.searchQuery,
-                onValueChange = vm::onSearchQueryChange,
-                onSubmit = { vm.submitSearch() },
-                modifier = Modifier.widthIn(max = searchWidth).width(searchWidth),
-                height = 40.dp,
-                trailing = {
-                    IconAction(
-                        Icons.Rounded.LibraryMusic,
-                        contentDescription = "Browse",
-                        onClick = vm::openSearch,
-                        size = 30.dp,
-                        iconSize = 18.dp,
-                    )
-                },
-            )
-        }
-
-        Row(
-            Modifier.weight(1f),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End,
-        ) {
-            IconAction(
-                Icons.Rounded.Notifications,
-                contentDescription = "Notifications",
-                onClick = { vm.showToast("No new notifications") },
-                size = 32.dp,
-                iconSize = 18.dp,
-                tint = RevibeColors.TextSecondary,
-            )
-            Spacer(Modifier.width(6.dp))
-            Box {
-                Box(
-                    Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(if (signedInUser != null) RevibeColors.Accent else RevibeColors.TextPrimary)
-                        .clickable { profileMenu = true }
-                        .pointerHoverIcon(PointerIcon.Hand),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (signedInUser != null) {
-                        Text(
-                            signedInUser.initials,
-                            style = RevibeType.micro.copy(letterSpacing = 0.sp),
-                            color = RevibeColors.OnAccent,
-                        )
+                IconAction(
+                    Icons.Rounded.KeyboardArrowRight,
+                    contentDescription = "Forward",
+                    onClick = vm::goForward,
+                    enabled = vm.forwardStack.isNotEmpty(),
+                    size = 32.dp,
+                    iconSize = 22.dp,
+                    tint = RevibeColors.TextSecondary,
+                    hoverTint = RevibeColors.TextPrimary,
+                )
+                Spacer(Modifier.weight(1f))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ReelHouseTopBarAction()
+                    UpdateTopBarAction(vm, update)
+                    if (homeBesideSearch) {
+                        // Keep the pills anchored while the home disc relocates.
+                        Spacer(Modifier.width(48.dp))
                     } else {
-                        Icon(Icons.Rounded.Person, contentDescription = "Profile", tint = RevibeColors.Base, modifier = Modifier.size(18.dp))
+                        HomeTopBarAction(vm)
                     }
                 }
-                if (signedInUser != null) {
+            }
+        }
+
+        Spacer(Modifier.width(4.dp))
+        SearchField(
+            value = vm.searchQuery,
+            onValueChange = vm::onSearchQueryChange,
+            onSubmit = { vm.submitSearch() },
+            modifier = Modifier.widthIn(max = searchWidth).width(searchWidth),
+            height = 40.dp,
+            trailing = {
+                IconAction(
+                    Icons.Rounded.LibraryMusic,
+                    contentDescription = "Browse",
+                    onClick = vm::openSearch,
+                    size = 30.dp,
+                    iconSize = 18.dp,
+                )
+            },
+        )
+        Spacer(Modifier.width(4.dp))
+
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+            if (homeBesideSearch) {
+                HomeTopBarAction(vm, Modifier.align(Alignment.CenterStart))
+            }
+            Row(
+                Modifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End,
+            ) {
+                IconAction(
+                    Icons.Rounded.Notifications,
+                    contentDescription = "Notifications",
+                    onClick = { vm.showToast("No new notifications") },
+                    size = 32.dp,
+                    iconSize = 18.dp,
+                    tint = RevibeColors.TextSecondary,
+                )
+                Spacer(Modifier.width(6.dp))
+                Box {
                     Box(
                         Modifier
-                            .align(Alignment.BottomEnd)
-                            .size(9.dp)
+                            .size(32.dp)
                             .clip(CircleShape)
-                            .background(syncDotColor(sync.phase)),
-                    )
-                }
-                DropdownMenu(
-                    expanded = profileMenu,
-                    onDismissRequest = { profileMenu = false },
-                    modifier = Modifier
-                        .width(286.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(RevibeColors.SurfaceRaised)
-                        .border(1.dp, RevibeColors.OutlineSoft, RoundedCornerShape(12.dp)),
-                ) {
-                    Column(Modifier.padding(6.dp)) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Box(
-                                Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(if (signedInUser != null) RevibeColors.Accent else RevibeColors.Surface),
-                                contentAlignment = Alignment.Center,
+                            .background(if (signedInUser != null) RevibeColors.Accent else RevibeColors.TextPrimary)
+                            .clickable { profileMenu = true }
+                            .pointerHoverIcon(PointerIcon.Hand),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (signedInUser != null) {
+                            Text(
+                                signedInUser.initials,
+                                style = RevibeType.micro.copy(letterSpacing = 0.sp),
+                                color = RevibeColors.OnAccent,
+                            )
+                        } else {
+                            Icon(Icons.Rounded.Person, contentDescription = "Profile", tint = RevibeColors.Base, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    if (signedInUser != null) {
+                        Box(
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(syncDotColor(sync.phase)),
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = profileMenu,
+                        onDismissRequest = { profileMenu = false },
+                        modifier = Modifier
+                            .width(286.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(RevibeColors.SurfaceRaised)
+                            .border(1.dp, RevibeColors.OutlineSoft, RoundedCornerShape(12.dp)),
+                    ) {
+                        Column(Modifier.padding(6.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                if (signedInUser != null) {
-                                    Text(
-                                        signedInUser.initials,
-                                        style = RevibeType.micro.copy(letterSpacing = 0.sp),
-                                        color = RevibeColors.OnAccent,
-                                    )
-                                } else {
-                                    Icon(
-                                        Icons.Rounded.Person,
-                                        contentDescription = null,
-                                        tint = RevibeColors.TextSecondary,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                }
-                            }
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    signedInUser?.email ?: "Not signed in",
-                                    style = RevibeType.bodyStrong.copy(fontSize = 12.5.sp),
-                                    color = RevibeColors.TextPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Spacer(Modifier.height(2.dp))
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                Box(
+                                    Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(if (signedInUser != null) RevibeColors.Accent else RevibeColors.Surface),
+                                    contentAlignment = Alignment.Center,
                                 ) {
                                     if (signedInUser != null) {
-                                        Box(
-                                            Modifier.size(6.dp).clip(CircleShape).background(syncDotColor(sync.phase)),
+                                        Text(
+                                            signedInUser.initials,
+                                            style = RevibeType.micro.copy(letterSpacing = 0.sp),
+                                            color = RevibeColors.OnAccent,
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Rounded.Person,
+                                            contentDescription = null,
+                                            tint = RevibeColors.TextSecondary,
+                                            modifier = Modifier.size(18.dp),
                                         )
                                     }
+                                }
+                                Column(Modifier.weight(1f)) {
                                     Text(
-                                        if (signedInUser != null) {
-                                            syncMenuLabel(sync.phase)
-                                        } else {
-                                            "Your library stays on this device"
-                                        },
-                                        style = RevibeType.caption.copy(fontSize = 11.sp),
-                                        color = RevibeColors.TextSecondary,
+                                        signedInUser?.email ?: "Not signed in",
+                                        style = RevibeType.bodyStrong.copy(fontSize = 12.5.sp),
+                                        color = RevibeColors.TextPrimary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
+                                    Spacer(Modifier.height(2.dp))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                    ) {
+                                        if (signedInUser != null) {
+                                            Box(
+                                                Modifier.size(6.dp).clip(CircleShape).background(syncDotColor(sync.phase)),
+                                            )
+                                        }
+                                        Text(
+                                            if (signedInUser != null) {
+                                                syncMenuLabel(sync.phase)
+                                            } else {
+                                                "Your library stays on this device"
+                                            },
+                                            style = RevibeType.caption.copy(fontSize = 11.sp),
+                                            color = RevibeColors.TextSecondary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
                                 }
                             }
-                        }
-                        HDivider(Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
-                        if (signedInUser == null) {
+                            HDivider(Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
+                            if (signedInUser == null) {
+                                ProfileMenuRow(
+                                    icon = Icons.Rounded.Person,
+                                    title = "Log in",
+                                    subtitle = "Sign in or create an account",
+                                    accent = true,
+                                    onClick = {
+                                        profileMenu = false
+                                        vm.openAuthModal()
+                                    },
+                                )
+                            }
                             ProfileMenuRow(
-                                icon = Icons.Rounded.Person,
-                                title = "Log in",
-                                subtitle = "Sign in or create an account",
-                                accent = true,
+                                icon = Icons.Rounded.AccountCircle,
+                                title = "Account & sync",
+                                subtitle = "Manage account and cloud sync",
                                 onClick = {
                                     profileMenu = false
-                                    vm.openAuthModal()
+                                    vm.openAccount()
                                 },
                             )
-                        }
-                        ProfileMenuRow(
-                            icon = Icons.Rounded.AccountCircle,
-                            title = "Account & sync",
-                            subtitle = "Manage account and cloud sync",
-                            onClick = {
-                                profileMenu = false
-                                vm.openAccount()
-                            },
-                        )
-                        ProfileMenuRow(
-                            icon = Icons.Rounded.Settings,
-                            title = "Settings",
-                            subtitle = "Playback, appearance and data",
-                            onClick = {
-                                profileMenu = false
-                                vm.openSettings()
-                            },
-                        )
-                        ProfileMenuRow(
-                            icon = Icons.Rounded.FolderOpen,
-                            title = "Local files",
-                            subtitle = if (vm.localTracks.size == 1) "1 track on this device" else "${vm.localTracks.size} tracks on this device",
-                            onClick = {
-                                profileMenu = false
-                                vm.openLocal()
-                            },
-                        )
-                        if (signedInUser != null) {
                             ProfileMenuRow(
-                                icon = Icons.Rounded.Logout,
-                                title = "Log out",
-                                subtitle = "Sign out on this device",
+                                icon = Icons.Rounded.Settings,
+                                title = "Settings",
+                                subtitle = "Playback, appearance and data",
                                 onClick = {
                                     profileMenu = false
-                                    vm.signOut()
+                                    vm.openSettings()
                                 },
                             )
+                            ProfileMenuRow(
+                                icon = Icons.Rounded.FolderOpen,
+                                title = "Local files",
+                                subtitle = if (vm.localTracks.size == 1) "1 track on this device" else "${vm.localTracks.size} tracks on this device",
+                                onClick = {
+                                    profileMenu = false
+                                    vm.openLocal()
+                                },
+                            )
+                            if (signedInUser != null) {
+                                ProfileMenuRow(
+                                    icon = Icons.Rounded.Logout,
+                                    title = "Log out",
+                                    subtitle = "Sign out on this device",
+                                    onClick = {
+                                        profileMenu = false
+                                        vm.signOut()
+                                    },
+                                )
+                            }
                         }
                     }
                 }
+                Spacer(Modifier.width(8.dp))
+                windowControls()
             }
-            Spacer(Modifier.width(8.dp))
-            windowControls()
         }
     }
+    }
+}
+
+@Composable
+private fun HomeTopBarAction(vm: AppViewModel, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(if (vm.route == Route.Home) RevibeColors.SurfaceRaised else RevibeColors.Surface)
+            .clickable { vm.openHome() }
+            .pointerHoverIcon(PointerIcon.Hand),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Rounded.Home,
+            contentDescription = "Home",
+            tint = if (vm.route == Route.Home) RevibeColors.TextPrimary else RevibeColors.TextSecondary,
+            modifier = Modifier.size(22.dp),
+        )
     }
 }
 
