@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.0] - 2026-11-28
+
+### Changed
+
+- The playlist and Spotify data pickers open the native Windows file dialog instead of Swing's
+  `JFileChooser`, so importing now looks and behaves like the rest of the OS: breadcrumb path,
+  search, Quick Access sidebar, filter dropdown and the usual keyboard shortcuts. Swing remains
+  only as the non-Windows path and as the fallback when the native dialog cannot be shown.
+
 ## [1.0.0] - 2026-11-28
 
 ### Changed

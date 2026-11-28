@@ -4,6 +4,7 @@ import com.revibe.imports.ImportFilePicker
 import com.revibe.imports.PickedTextFile
 import com.revibe.imports.SpotifyArchiveEntries
 import com.revibe.imports.archiveFingerprint
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
@@ -21,23 +22,14 @@ import javax.swing.UIManager
 import javax.swing.filechooser.FileNameExtensionFilter
 
 class DesktopImportFilePicker : ImportFilePicker {
-    override suspend fun pickPlaylistFile(): PickedTextFile? = withContext(Dispatchers.Swing) {
-        configureLookAndFeel()
-        val chooser = JFileChooser().apply {
-            dialogTitle = "Choose the playlist file downloaded from TuneMyMusic"
-            fileSelectionMode = JFileChooser.FILES_ONLY
-            isMultiSelectionEnabled = false
-            // Start where browsers put exports; the user still picks the exact file.
-            currentDirectory = downloadsDirectory().takeIf { it.isDirectory }
-            fileFilter = FileNameExtensionFilter(
-                "Playlist files (CSV, TXT, M3U, M3U8, XSPF, XML)",
-                "csv", "txt", "tsv", "m3u", "m3u8", "xspf", "xml",
-            )
-        }
-        if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return@withContext null
-        val file = chooser.selectedFile ?: return@withContext null
+    override suspend fun pickPlaylistFile(): PickedTextFile? {
+        val file = pickFile(
+            title = "Choose the playlist file downloaded from TuneMyMusic",
+            filterLabel = "Playlist files (CSV, TXT, M3U, M3U8, XSPF, XML)",
+            extensions = listOf("csv", "txt", "tsv", "m3u", "m3u8", "xspf", "xml"),
+        ) ?: return null
         if (file.length() > MAX_PLAYLIST_BYTES) error("Playlist files must be smaller than 10 MB.")
-        PickedTextFile(file.name, decode(file.readBytes()))
+        return withContext(Dispatchers.IO) { PickedTextFile(file.name, decode(file.readBytes())) }
     }
 
     override suspend fun openDownloadsFolder(): Boolean = withContext(Dispatchers.IO) {
@@ -55,20 +47,54 @@ class DesktopImportFilePicker : ImportFilePicker {
     private fun downloadsDirectory(): File =
         File(System.getProperty("user.home").orEmpty(), "Downloads")
 
-    override suspend fun pickSpotifyArchive(): SpotifyArchiveEntries? = withContext(Dispatchers.IO) {
-        val file = withContext(Dispatchers.Swing) {
-            configureLookAndFeel()
-            val chooser = JFileChooser().apply {
-                dialogTitle = "Choose your Spotify data ZIP"
-                fileSelectionMode = JFileChooser.FILES_ONLY
-                fileFilter = FileNameExtensionFilter("ZIP archives", "zip")
-            }
-            if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
-        } ?: return@withContext null
+    override suspend fun pickSpotifyArchive(): SpotifyArchiveEntries? {
+        val file = pickFile(
+            title = "Choose your Spotify data ZIP",
+            filterLabel = "ZIP archives",
+            extensions = listOf("zip"),
+        ) ?: return null
         if (!file.name.endsWith(".zip", ignoreCase = true)) error("Choose the ZIP downloaded from Spotify.")
         if (file.length() > MAX_ARCHIVE_BYTES) error("The Spotify ZIP is larger than the 200 MB import limit.")
-        readSpotifyArchive(file)
+        return withContext(Dispatchers.IO) { readSpotifyArchive(file) }
     }
+
+    /**
+     * The Windows shell dialog matches the rest of the OS; other desktops keep the
+     * Swing chooser, and it is also the fallback when PowerShell is unavailable.
+     */
+    private suspend fun pickFile(title: String, filterLabel: String, extensions: List<String>): File? {
+        if (WindowsFileDialog.isAvailable()) {
+            try {
+                return withContext(Dispatchers.IO) {
+                    WindowsFileDialog.open(
+                        title = title,
+                        filterLabel = filterLabel,
+                        extensions = extensions,
+                        // Start where browsers put exports; the user still picks the exact file.
+                        initialDirectory = downloadsDirectory().takeIf { it.isDirectory },
+                    )
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                // Fall through to the Swing chooser rather than leaving the click with no dialog.
+            }
+        }
+        return pickWithSwing(title, filterLabel, extensions)
+    }
+
+    private suspend fun pickWithSwing(title: String, filterLabel: String, extensions: List<String>): File? =
+        withContext(Dispatchers.Swing) {
+            configureLookAndFeel()
+            val chooser = JFileChooser().apply {
+                dialogTitle = title
+                fileSelectionMode = JFileChooser.FILES_ONLY
+                isMultiSelectionEnabled = false
+                currentDirectory = downloadsDirectory().takeIf { it.isDirectory }
+                fileFilter = FileNameExtensionFilter(filterLabel, *extensions.toTypedArray())
+            }
+            if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
+        }
 
     internal fun readSpotifyArchive(file: File): SpotifyArchiveEntries {
         val files = mutableListOf<PickedTextFile>()
